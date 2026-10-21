@@ -7,7 +7,9 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 - `index.html`: contenido y estructura de la web.
 - `styles.css`: diseño responsive negro/violeta/cian y animaciones CSS.
 - `script.js`: menú móvil y configuración del enlace de descarga.
-- `assets/favicon.svg`: icono del sitio.
+- `assets/logo-mark.png`: emblema del logotipo (fondo transparente) usado en la cabecera y el pie.
+- `assets/logo-og.jpg`: logotipo completo de MusicNous, usado como imagen al compartir el enlace.
+- `assets/favicon.png`: icono de la pestaña (`assets/favicon.svg` es el icono anterior y ya no se usa).
 
 ## Antes de publicar
 
@@ -46,6 +48,7 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 - El documento usa `lang="es"` y **no** desactiva la traducción de la página completa (no hay `<meta name="google" content="notranslate">`), para que los visitantes puedan traducir el resto del contenido.
 - Todo elemento que muestra el nombre de la marca lleva `translate="no"`: los logotipos de cabecera y pie (`a.brand`), la etiqueta `MUSICNOUS` de la tarjeta del reproductor, el texto `musicnous` de la vista previa del navegador y cada mención de `MusicNous` dentro de párrafos, botones, preguntas frecuentes y copyright.
 - Al añadir texto nuevo con el nombre, envuélvelo así: `<span translate="no">MusicNous</span>`. Si lo insertas desde JavaScript, incluye ese mismo `span`.
+- Dentro de botones, enlaces con flecha y preguntas frecuentes (contenedores flex con reglas para `span`), usa `<span class="lbl">Texto <span class="nt" translate="no">MusicNous</span></span>`; las clases `lbl` y `nt` evitan que el texto cambie de tamaño, color o posición.
 - No separes el nombre en trozos dentro de distintos elementos fuera de un contenedor con `translate="no"`, porque el traductor puede procesar «Music» y «Nous» por separado.
 - Limitación conocida: Chrome puede traducir el título de la pestaña (`<title>`) y no hay una forma fiable de impedirlo sin afectar al resto del título.
 
