@@ -5,3 +5,30 @@
 .faq-list details[open] summary span.lbl,.faq-list details[open] summary span.nt{transform:none}
 /* Logotipo gráfico de MusicNous */
 .brand-logo{display:block;height:40px;width:auto;flex:none}.footer-brand .brand-logo{height:34px}
+/* Cuenta regresiva, estado de la descarga y soporte */
+[hidden]{display:none!important}
+.countdown{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;max-width:520px;margin:30px auto 0}
+.countdown-unit{padding:16px 6px 12px;border:1px solid rgba(150,111,255,.27);border-radius:14px;background:rgba(255,255,255,.03)}
+.countdown-unit b{display:block;font:600 clamp(26px,7vw,42px)/1 'Space Grotesk',sans-serif;letter-spacing:-1px;font-variant-numeric:tabular-nums;background:linear-gradient(100deg,#b17aff,#4de7f5);-webkit-background-clip:text;background-clip:text;color:transparent}
+.countdown-unit span{display:block;margin-top:8px;font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted)}
+.download-card>p.countdown-note{margin-top:14px;font-size:11px}
+.launch-message{margin:24px auto 0;max-width:520px;padding:16px 18px;border:1px solid rgba(77,231,245,.35);border-radius:14px;background:linear-gradient(135deg,rgba(156,101,255,.16),rgba(77,231,245,.1))}
+.launch-message strong{display:block;font:600 clamp(18px,5vw,24px)/1.2 'Space Grotesk',sans-serif;color:var(--text)}
+.launch-message p{margin:6px 0 0;font-size:12px;color:#d6d1ea}
+.button[aria-disabled="true"]{opacity:.6;cursor:not-allowed;filter:saturate(.75);box-shadow:none}
+.button[aria-disabled="true"]:hover{transform:none}
+.download-info{margin:14px auto 0;font-size:12px;color:#d6d1ea}
+.download-integrity{max-width:540px;margin:10px auto 0;font-size:10px;color:#918ba7}
+.download-integrity summary{cursor:pointer}
+.download-integrity code{display:block;margin-top:6px;overflow-wrap:anywhere;word-break:break-all;color:#c4bfd4;font-family:ui-monospace,Menlo,Consolas,monospace}
+.download-alt{display:inline-block;margin-top:10px;font-size:11px;color:var(--cyan)}
+.support{padding-bottom:110px}
+.support-card{text-align:center;padding:56px 24px 44px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(135deg,#131122,#0c0b14)}
+.support-card .section-heading{margin-bottom:26px}
+.support-actions{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
+.support-actions .button{min-width:210px}
+.support-email{margin:20px 0 0;font-size:13px;overflow-wrap:anywhere}
+.support-email a{color:var(--cyan);text-decoration:none}
+.support-feedback{min-height:1.4em;margin:10px 0 0;font-size:11px;color:#918ba7}
+@media(max-width:700px){.support{padding-bottom:75px}.support-card{padding:40px 18px 32px}.support-actions{flex-direction:column}.countdown{gap:8px}.countdown-unit{padding:12px 4px 10px}}
+

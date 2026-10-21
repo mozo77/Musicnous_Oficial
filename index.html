@@ -29,6 +29,7 @@
       <a href="#funciones">Funciones</a>
       <a href="#experiencia">Experiencia</a>
       <a href="#preguntas">Preguntas</a>
+      <a href="#soporte">Soporte</a>
       <a class="nav-cta" href="#descarga">Descargar <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
@@ -80,10 +81,41 @@
     </section>
 
     <section class="download section-wrap" id="descarga">
-      <div class="download-card"><div class="download-orb"></div><div class="eyebrow"><span class="status-dot"></span> PRÓXIMAMENTE</div><h2>Tu próxima forma<br>de escuchar música.</h2><p><span translate="no">MusicNous</span> prepara su lanzamiento para Android. Vuelve pronto para descargar la versión oficial.</p><div class="download-actions"><a id="download-button" class="button button-primary" href="#descarga" aria-describedby="download-status">Descarga disponible el 31 de octubre <span aria-hidden="true">↗</span></a></div><p id="download-status" class="download-status" role="status">El enlace oficial de GitHub Releases se añadirá cuando la publicación esté lista.</p><div class="download-meta"><span><i>✓</i> Android</span><span><i>✓</i> Sin anuncios</span><span><i>✓</i> Descarga oficial</span></div></div>
+      <div class="download-card" id="download-card">
+        <div class="download-orb"></div>
+        <div class="eyebrow"><span class="status-dot"></span> <span id="download-eyebrow">PRÓXIMAMENTE</span></div>
+        <h2>Tu próxima forma<br>de escuchar música.</h2>
+        <p><span translate="no">MusicNous</span> prepara su lanzamiento para Android. Vuelve pronto para descargar la versión oficial.</p>
+        <div class="countdown" id="countdown" role="timer" aria-live="off" aria-label="Cuenta regresiva para el lanzamiento">
+          <div class="countdown-unit"><b id="cd-days">--</b><span>días</span></div>
+          <div class="countdown-unit"><b id="cd-hours">--</b><span>horas</span></div>
+          <div class="countdown-unit"><b id="cd-minutes">--</b><span>minutos</span></div>
+          <div class="countdown-unit"><b id="cd-seconds">--</b><span>segundos</span></div>
+        </div>
+        <p class="countdown-note" id="countdown-note">Lanzamiento oficial: 31 de octubre de 2026, 00:00 (hora de Colombia)</p>
+        <div class="launch-message" id="launch-message" hidden><strong id="launch-title"></strong><p id="launch-text"></p></div>
+        <div class="download-actions"><a id="download-button" class="button button-primary" href="#descarga" aria-disabled="true" aria-describedby="download-status"><span class="lbl" id="download-button-label">Próximamente</span> <span aria-hidden="true">↗</span></a></div>
+        <p id="download-status" class="download-status" role="status" aria-live="polite">La descarga se activará cuando la versión oficial esté publicada y verificada.</p>
+        <div class="download-info" id="download-info" hidden></div>
+        <details class="download-integrity" id="download-integrity" hidden><summary>Comprobar integridad (SHA-256)</summary><code id="download-sha"></code></details>
+        <div class="download-alt-wrap"><a class="download-alt" id="download-alt" href="#descarga" hidden>Abrir la página de esta versión en GitHub</a></div>
+        <div class="download-meta"><span><i>✓</i> Android</span><span><i>✓</i> Sin anuncios</span><span><i>✓</i> Descarga oficial</span></div>
+      </div>
     </section>
 
-    <section class="faq section-wrap" id="preguntas"><div class="section-heading"><div class="eyebrow">ANTES DE EMPEZAR</div><h2>Preguntas <span class="gradient-text">frecuentes.</span></h2></div><div class="faq-list"><details><summary><span class="lbl">¿Cuándo se lanza <span class="nt" translate="no">MusicNous</span>?</span><span>+</span></summary><p>El lanzamiento está previsto para el 31 de octubre de 2026. El enlace de descarga se publicará aquí cuando el APK oficial esté listo.</p></details><details><summary><span class="lbl">¿<span class="nt" translate="no">MusicNous</span> tendrá anuncios?</span><span>+</span></summary><p>La versión gratuita se presenta sin anuncios.</p></details><details><summary>¿Cómo instalo el APK?<span>+</span></summary><p>Cuando esté publicado, descarga el archivo desde el enlace oficial. Android puede pedirte autorización para instalar aplicaciones de esa fuente. Instala únicamente el APK obtenido desde el enlace oficial de <span translate="no">MusicNous</span>.</p></details><details><summary>¿Cómo puedo reportar un problema?<span>+</span></summary><p>En esta primera versión de la web todavía no hay un canal de soporte configurado. Añade aquí un correo o perfil oficial cuando decidas cuál usar.</p></details></div></section>
+    <section class="faq section-wrap" id="preguntas"><div class="section-heading"><div class="eyebrow">ANTES DE EMPEZAR</div><h2>Preguntas <span class="gradient-text">frecuentes.</span></h2></div><div class="faq-list"><details><summary><span class="lbl">¿Cuándo se lanza <span class="nt" translate="no">MusicNous</span>?</span><span>+</span></summary><p>El lanzamiento está previsto para el 31 de octubre de 2026. El enlace de descarga se publicará aquí cuando el APK oficial esté listo.</p></details><details><summary><span class="lbl">¿<span class="nt" translate="no">MusicNous</span> tendrá anuncios?</span><span>+</span></summary><p>La versión gratuita se presenta sin anuncios.</p></details><details><summary>¿Cómo instalo el APK?<span>+</span></summary><p>Cuando esté publicado, descarga el archivo desde el enlace oficial. Android puede pedirte autorización para instalar aplicaciones de esa fuente. Instala únicamente el APK obtenido desde el enlace oficial de <span translate="no">MusicNous</span>.</p></details><details><summary>¿Cómo puedo reportar un problema?<span>+</span></summary><p>Escríbenos a <a href="mailto:ronaldoguillermosarabia@gmail.com?subject=Consulta%20sobre%20MusicNous" translate="no">ronaldoguillermosarabia@gmail.com</a> o usa la sección de <a href="#soporte">contacto</a>. Cuéntanos qué ocurrió y qué teléfono usas para poder ayudarte mejor.</p></details></div></section>
+
+    <section class="support section-wrap" id="soporte">
+      <div class="support-card">
+        <div class="section-heading"><div class="eyebrow">CONTACTO Y SOPORTE</div><h2>Contacto <span class="gradient-text">y preguntas.</span></h2><p>¿Tienes alguna duda sobre <span translate="no">MusicNous</span>? ¿Encontraste un error o necesitas ayuda? Escríbenos a nuestro correo oficial de soporte. Estaremos encantados de recibir tus preguntas y comentarios.</p></div>
+        <div class="support-actions">
+          <a class="button button-primary" id="support-button" href="mailto:ronaldoguillermosarabia@gmail.com?subject=Consulta%20sobre%20MusicNous">Contactar con soporte <span aria-hidden="true">↗</span></a>
+          <button type="button" class="button button-ghost" id="copy-email" data-email="ronaldoguillermosarabia@gmail.com">Copiar correo</button>
+        </div>
+        <p class="support-email"><a href="mailto:ronaldoguillermosarabia@gmail.com?subject=Consulta%20sobre%20MusicNous" translate="no">ronaldoguillermosarabia@gmail.com</a></p>
+        <p class="support-feedback" id="support-feedback" role="status" aria-live="polite"></p>
+      </div>
+    </section>
   </main>
 
   <footer class="site-footer"><a class="brand footer-brand" translate="no" href="#inicio"><img class="brand-logo" src="assets/logo-mark.png" alt="" width="56" height="40"><span>Music<span class="brand-accent">Nous</span><small>OFFICIAL</small></span></a><p>Tu música, tu estilo, a tu manera.</p><div class="footer-bottom"><span>© <span id="year">2026</span> <span translate="no">MusicNous</span>. Todos los derechos reservados.</span><a href="#inicio">Volver arriba ↑</a></div></footer>

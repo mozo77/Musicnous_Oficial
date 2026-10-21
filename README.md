@@ -6,23 +6,19 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 
 - `index.html`: contenido y estructura de la web.
 - `styles.css`: diseño responsive negro/violeta/cian y animaciones CSS.
-- `script.js`: menú móvil y configuración del enlace de descarga.
+- `script.js`: menú móvil, cuenta regresiva y estado del botón de descarga.
+- `release.json`: estado de la descarga. **Solo lo modifica el comando `lanzamiento-oficial`** después de publicar y verificar el APK.
+- `tools/lanzamiento-oficial` y `tools/instalar-termux.sh`: publicación del lanzamiento desde Termux.
 - `assets/logo-mark.png`: emblema del logotipo (fondo transparente) usado en la cabecera y el pie.
 - `assets/logo-og.jpg`: logotipo completo de MusicNous, usado como imagen al compartir el enlace.
 - `assets/favicon.png`: icono de la pestaña (`assets/favicon.svg` es el icono anterior y ya no se usa).
 
-## Antes de publicar
+## Cuenta regresiva y descarga
 
-1. Revisa las funciones descritas para asegurarte de que corresponden a las que incluirá el APK del lanzamiento.
-2. No cambies el enlace de descarga por una URL inventada. Cuando publiques el APK, abre su publicación real en GitHub Releases y copia la URL pública.
-3. En `script.js`, cambia esta línea:
-
-   ```js
-   const GITHUB_RELEASES_URL = "";
-   ```
-
-   por la URL real, por ejemplo `const GITHUB_RELEASES_URL = "https://github.com/USUARIO/REPOSITORIO/releases/latest";`. Sustituye el ejemplo por tu URL real.
-4. Si eliges un canal de soporte, añade su enlace o correo en la sección de preguntas frecuentes. Por ahora no se inventa un contacto.
+- **Cuenta regresiva:** apunta al 31/10/2026 a las 00:00 en hora de Colombia (`launchAt` en `script.js`, `2026-10-31T00:00:00-05:00`; Colombia no usa horario de verano). Al llegar a cero se detiene y muestra un mensaje de lanzamiento, sin tiempos negativos. Usa el reloj del dispositivo del visitante.
+- **Probarla:** cambia temporalmente `launchAt` por una hora cercana (por ejemplo, dentro de dos minutos, con `-05:00`), recarga la web y observa el conteo y el mensaje final. Después restaura `2026-10-31T00:00:00-05:00`.
+- **Descarga:** el botón lee `release.json`. Mientras diga `"status": "coming-soon"`, muestra «Próximamente» y no ofrece ningún enlace. Solo se activa si `release.json` está completo y coherente (URL de un APK de las publicaciones de este repositorio, versión, tamaño y SHA-256) y, además, la API pública de GitHub confirma que el archivo existe en una publicación visible. Si no se puede confirmar, no se ofrece.
+- **No edites `release.json` a mano** para anunciar la descarga: debe escribirlo el comando, que lo hace al final de todas las verificaciones.
 
 ## Publicar gratis con GitHub Pages
 
@@ -33,15 +29,45 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 5. Selecciona la rama `main` y la carpeta `/(root)`, y pulsa **Save**.
 6. Espera a que termine la publicación. GitHub mostrará la URL del sitio en la sección Pages; será una URL del tipo `https://USUARIO.github.io/musicnous-official/`.
 7. Abre la URL en el teléfono y en un computador. Comprueba menú móvil, secciones, enlaces y lectura del contenido.
-8. Cuando el APK esté publicado en Releases, configura `GITHUB_RELEASES_URL` con el enlace real, vuelve a subir `script.js` y verifica el botón de descarga.
+8. Cuando publiques el APK con `lanzamiento-oficial`, comprueba en la web el botón de descarga.
 
-## Publicar el APK en GitHub Releases
+## Publicar el lanzamiento desde Termux
 
-1. En el repositorio de código o distribución, crea una publicación nueva desde **Releases → Draft a new release**.
-2. Añade una etiqueta de versión que corresponda a tu versión real de APK.
-3. Adjunta el archivo APK firmado que hayas probado. No publiques una compilación de prueba por accidente.
-4. Publica el release y copia su URL pública.
-5. Pega esa URL en `GITHUB_RELEASES_URL` en el repositorio de la web.
+### Configuración segura (una sola vez)
+
+1. Con el repositorio clonado en Termux: `bash ~/Musicnous_Oficial/tools/instalar-termux.sh`. Instala `gh`, `curl`, `coreutils`, `unzip`, `aapt` y `apksigner`, y crea el comando `lanzamiento-oficial`.
+2. Crea un token **fine-grained** en GitHub (Settings → Developer settings → Personal access tokens → Fine-grained tokens):
+   - Repository access: **Only select repositories** → `Musicnous_Oficial`.
+   - Permissions → Repository permissions → **Contents: Read and write**. No añadas más permisos.
+   - Expiración corta (por ejemplo, 30 días).
+3. Inicia sesión sin escribir el token en un comando: ejecuta `gh auth login --with-token`, pega el token, pulsa Enter y luego Ctrl+D. `gh` lo guarda en el almacenamiento privado de Termux (no en el repositorio). Para quitarlo: `gh auth logout`.
+4. Nunca pegues el token en `script.js`, `release.json`, el repositorio ni chats. Si lo expones, revócalo en GitHub.
+5. Revisa el entorno: `lanzamiento-oficial doctor` (no modifica nada).
+
+### Seleccionar el APK final
+
+```
+lanzamiento-oficial seleccionar ~/storage/downloads/TU-APK-FINAL.apk
+```
+
+Guarda la ruta y el SHA-256 en `~/.config/musicnous/apk_seleccionado` (fuera del repositorio). Si el archivo cambia después, el comando se detiene y hay que volver a seleccionarlo. La primera vez que uses Descargas, ejecuta `termux-setup-storage`.
+
+### Publicar
+
+```
+lanzamiento-oficial --simulacro   # todas las comprobaciones, sin publicar nada
+lanzamiento-oficial               # publicación real
+```
+
+El comando comprueba el APK (existe, no vacío, ZIP válido), calcula el SHA-256, lee versión y paquete (aapt) y verifica la firma (apksigner). Se detiene si el paquete no es el esperado, si el APK es depurable, si está firmado con el certificado de depuración, si la versión parece de pruebas, si la etiqueta `v<versión>` ya existe o si la versión no es más nueva que la publicada. Antes de publicar pide que escribas exactamente `PUBLICAR v<versión>` (con `CON AVISOS` si hubo comprobaciones que no pudieron hacerse o si aún no es la fecha de lanzamiento). Después sube el APK a un borrador, comprueba la subida, lo publica, verifica el enlace público (HTTP 200 y tamaño), vuelve a descargarlo para comparar el SHA-256 (usa datos móviles; se omite con `--sin-redescarga`) y solo entonces actualiza `release.json` y espera a que GitHub Pages lo muestre. Nunca borra ni sobrescribe publicaciones existentes.
+
+Convención: etiqueta `v<versionName>` y archivo `MusicNous-<versionName>.apk`. Antes de cada lanzamiento, sube `versionName` y `versionCode` en la app. Si el APK usa otro identificador de paquete, cámbialo en `~/.config/musicnous/lanzamiento.conf`.
+
+### Verificar que el botón descarga el APK correcto
+
+1. Abre la web (sin caché) y comprueba que el botón dice «Descargar MusicNous» y muestra la versión y el tamaño esperados.
+2. Pulsa el botón y confirma que se descarga `MusicNous-<versión>.apk`.
+3. Despliega «Comprobar integridad (SHA-256)» y compara con `sha256sum` del archivo descargado en Termux.
 
 ## Protección de la marca frente a la traducción automática
 
@@ -54,7 +80,6 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 
 ## Notas
 
-- La página no anuncia Premium.
-- El sitio no recopila datos, no usa formularios ni integra analítica.
+- El sitio no recopila datos, no usa formularios ni integra analítica. El botón «Contactar con soporte» solo abre el cliente de correo del visitante.
 - Las fuentes de Google Fonts requieren conexión a internet; las fuentes de respaldo del sistema se usarán si no están disponibles.
-- GitHub Pages es alojamiento estático; no puede verificar pagos ni emitir licencias por sí solo.
+- GitHub Pages es alojamiento estático: el estado de la descarga se actualiza solo mediante `release.json`.

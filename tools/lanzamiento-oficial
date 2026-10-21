@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+# lanzamiento-oficial — publica el APK final de MusicNous en GitHub Releases y activa la
+# descarga en la web (release.json). Pensado para Termux; no contiene tokens ni contraseñas.
+#
+# Uso:
+#   lanzamiento-oficial doctor                  Revisa tu entorno (no modifica nada)
+#   lanzamiento-oficial seleccionar RUTA.apk    Elige el APK final
+#   lanzamiento-oficial estado                  Muestra el APK elegido y lo publicado
+#   lanzamiento-oficial [--simulacro]           Publica. Con --simulacro hace todas las
+#                                               comprobaciones y se detiene antes de publicar.
+#   Opciones de publicación: --sin-redescarga   No vuelve a descargar el APK para comprobar el hash
+#                            --version X.Y.Z    Solo si no hay aapt: indica la versión a mano
+set -u
+set -o pipefail
+
+CONF_DIR="${MUSICNOUS_CONF_DIR:-$HOME/.config/musicnous}"
+CONF_FILE="$CONF_DIR/lanzamiento.conf"
+SEL_FILE="$CONF_DIR/apk_seleccionado"
+TTY_IN="${MUSICNOUS_TTY:-/dev/tty}"
+
+# Valores por defecto (se cambian en lanzamiento.conf, nunca en este archivo)
+REPO="mozo77/Musicnous_Oficial"
+RAMA="main"
+PAGES_URL="https://mozo77.github.io/Musicnous_Oficial"
+PAQUETE_ESPERADO="io.github.jmoxs77.musicnous"
+LANZAMIENTO_UTC="2026-10-31T05:00:00Z"   # 31/10/2026 00:00 en Colombia
+
+# ---------- utilidades ----------
+if [ -t 1 ]; then R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; B=$'\033[1m'; N=$'\033[0m'; else R=; G=; Y=; B=; N=; fi
+info()  { printf '%b\n' "$*"; }
+ok()    { printf '%s✔%s %s\n' "$G" "$N" "$*"; }
+aviso() { printf '%s⚠%s %s\n' "$Y" "$N" "$*"; }
+die()   { printf '%s✖ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
+esperar() { [ -n "${MUSICNOUS_SIN_ESPERA:-}" ] || sleep "$1"; }
+tiene() { command -v "$1" >/dev/null 2>&1; }
+sha256_de() { sha256sum "$1" | cut -d' ' -f1; }
+tam_de()    { wc -c < "$1" | tr -d ' '; }
+mb_de()     { awk -v b="$1" 'BEGIN{printf "%.1f MB", b/1048576}'; }
+json_campo() { printf '%s\n' "$2" | sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" | head -1 | tr -d ' \r'; }
+
+crear_config() {
+  mkdir -p "$CONF_DIR" && chmod 700 "$CONF_DIR" 2>/dev/null
+  [ -f "$CONF_FILE" ] && return 0
+  ( umask 077; cat > "$CONF_FILE" <<CONF
+# Configuración de lanzamiento-oficial. Solo líneas CLAVE="valor". NO pongas tokens aquí.
+REPO="$REPO"
+RAMA="$RAMA"
+PAGES_URL="$PAGES_URL"
+# Identificador de paquete que debe tener el APK (evita publicar otra app por error):
+PAQUETE_ESPERADO="$PAQUETE_ESPERADO"
+LANZAMIENTO_UTC="$LANZAMIENTO_UTC"
+CONF
+  )
+}
+
+cargar_config() {
+  crear_config
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    if [[ "$line" =~ ^(REPO|RAMA|PAGES_URL|PAQUETE_ESPERADO|LANZAMIENTO_UTC)=\"([^\"]*)\"$ ]]; then
+      printf -v "${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[2]}"
+    else
+      aviso "Línea ignorada en $CONF_FILE: $line"
+    fi
+  done < "$CONF_FILE"
+  [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "REPO no válido en $CONF_FILE: $REPO"
+  [[ "$RAMA" =~ ^[A-Za-z0-9_./-]+$ ]] || die "RAMA no válida en $CONF_FILE: $RAMA"
+  [[ "$PAGES_URL" =~ ^https://[A-Za-z0-9._/-]+$ ]] || die "PAGES_URL no válida en $CONF_FILE: $PAGES_URL"
+  PAGES_URL="${PAGES_URL%/}"
+}
+
+validar_zip() {
+  if tiene unzip; then unzip -tqq "$1" >/dev/null 2>&1 || die "El archivo no es un APK/ZIP válido (está dañado o incompleto): $1"
+  else [ "$(head -c2 "$1")" = "PK" ] || die "El archivo no parece un APK (no empieza con la firma ZIP): $1"; fi
+}
+
+leer_metadata() {  # $1 = apk → PKG VNAME VCODE DEBUGGABLE META_OK
+  PKG=""; VNAME=""; VCODE=""; DEBUGGABLE="no"; META_OK="no"
+  local cmd="" out
+  if tiene aapt; then cmd=aapt; elif tiene aapt2; then cmd=aapt2; fi
+  [ -n "$cmd" ] || return 0
+  if out=$("$cmd" dump badging "$1" 2>/dev/null) && [ -n "$out" ]; then
+    META_OK="si"
+    PKG=$(printf '%s\n' "$out"    | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)
+    VCODE=$(printf '%s\n' "$out"  | sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p" | head -1)
+    VNAME=$(printf '%s\n' "$out"  | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p" | head -1)
+    printf '%s\n' "$out" | grep -q '^application-debuggable' && DEBUGGABLE="si"
+  fi
+}
+
+leer_firma() {  # $1 = apk → FIRMA (valida|invalida|no-comprobada) FIRMANTE FIRMA_SHA FIRMA_DEBUG
+  FIRMA="no-comprobada"; FIRMANTE=""; FIRMA_SHA=""; FIRMA_DEBUG="no"
+  tiene apksigner || return 0
+  local out
+  if out=$(apksigner verify --verbose --print-certs "$1" 2>&1); then
+    FIRMA="valida"
+    FIRMANTE=$(printf '%s\n' "$out" | sed -n 's/^Signer #1 certificate DN: //p' | head -1)
+    FIRMA_SHA=$(printf '%s\n' "$out" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+    printf '%s' "$FIRMANTE" | grep -qi 'Android Debug' && FIRMA_DEBUG="si"
+  else
+    FIRMA="invalida"
+  fi
+}
+
+comprobar_gh() {
+  tiene gh   || die "Falta gh (GitHub CLI). Instálalo con: pkg install gh"
+  tiene curl || die "Falta curl. Instálalo con: pkg install curl"
+  tiene base64 || die "Falta base64 (coreutils). Instálalo con: pkg install coreutils"
+  gh auth status >/dev/null 2>&1 || die "gh no tiene una sesión iniciada. Mira las instrucciones de autenticación en el README (sección Termux)."
+  local push
+  push=$(gh api "repos/$REPO" --jq .permissions.push 2>/dev/null) || die "No pude acceder al repositorio $REPO con tu sesión de gh."
+  [ "$push" = "true" ] || die "Tu sesión de gh no tiene permiso de escritura en $REPO (necesita Contents: Read and write)."
+}
+
+json_sha_publicado()       { gh api "repos/$REPO/contents/release.json?ref=$RAMA" --jq .sha 2>/dev/null; }
+json_contenido_publicado() { gh api "repos/$REPO/contents/release.json?ref=$RAMA" --jq .content 2>/dev/null | base64 -d 2>/dev/null; }
+
+verificar_url_publica() {  # $1 url  $2 tamaño esperado
+  local url="$1" tam="$2" n hdrs code len
+  for n in 1 2 3 4 5 6; do
+    hdrs=$(curl -sIL --max-time 40 "$url" 2>/dev/null | tr -d '\r') || hdrs=""
+    code=$(printf '%s\n' "$hdrs" | grep -i '^HTTP/' | tail -1 | awk '{print $2}')
+    len=$(printf '%s\n' "$hdrs" | grep -i '^content-length:' | tail -1 | tr -dc '0-9')
+    if [ "$code" = "200" ] && [ "$len" = "$tam" ]; then return 0; fi
+    info "  intento $n/6: HTTP ${code:-sin respuesta}, tamaño ${len:-?} (esperado $tam)"
+    esperar 5
+  done
+  return 1
+}
+
+verificar_redescarga() {  # $1 url  $2 sha256 esperado
+  local tmp; tmp=$(mktemp) || return 1
+  if curl -sL --max-time 900 -o "$tmp" "$1" && [ "$(sha256_de "$tmp")" = "$2" ]; then rm -f "$tmp"; return 0; fi
+  rm -f "$tmp"; return 1
+}
+
+leer_seleccion() {  # → APK_PATH SEL_SHA SEL_TAM
+  [ -f "$SEL_FILE" ] || die "Todavía no has seleccionado un APK. Usa: lanzamiento-oficial seleccionar /ruta/al/archivo.apk"
+  APK_PATH=$(grep '^ruta=' "$SEL_FILE" | head -1 | cut -d= -f2-)
+  SEL_SHA=$(grep '^sha256=' "$SEL_FILE" | head -1 | cut -d= -f2-)
+  SEL_TAM=$(grep '^tam=' "$SEL_FILE" | head -1 | cut -d= -f2-)
+  [ -n "$APK_PATH" ] && [ -n "$SEL_SHA" ] || die "El archivo de selección está dañado. Vuelve a seleccionar el APK."
+}
+
+mostrar_apk() {
+  info "  Paquete:   ${PKG:-(desconocido)}"
+  info "  Versión:   ${VNAME:-(desconocida)}  (código ${VCODE:-?})"
+  info "  Depurable: $DEBUGGABLE"
+  case "$FIRMA" in
+    valida) info "  Firma:     válida · $FIRMANTE" ; info "  Cert. SHA-256: $FIRMA_SHA" ;;
+    invalida) info "  Firma:     INVÁLIDA" ;;
+    *) info "  Firma:     no comprobada (apksigner no disponible)" ;;
+  esac
+}
+
+# ---------- subcomandos ----------
+cmd_doctor() {
+  cargar_config
+  info "${B}Revisión del entorno${N}"
+  info "  Sistema:   $(uname -srm 2>/dev/null)"
+  info "  Termux:    ${PREFIX:-no detectado}"
+  info "  bash:      ${BASH_VERSION}"
+  local c
+  for c in gh curl sha256sum base64 unzip aapt aapt2 apksigner java; do
+    if tiene "$c"; then ok "$c: $(command -v "$c")"; else aviso "$c: no encontrado"; fi
+  done
+  tiene aapt || tiene aapt2 || aviso "Sin aapt/aapt2 no se puede leer versión ni paquete (pkg install aapt)"
+  tiene apksigner || aviso "Sin apksigner no se puede verificar la firma (pkg install apksigner)"
+  [ -d "$HOME/storage/downloads" ] && ok "Acceso a Descargas: ~/storage/downloads" || aviso "Sin acceso a Descargas: ejecuta termux-setup-storage"
+  ok "Configuración: $CONF_FILE (repo $REPO, rama $RAMA)"
+  info "  Paquete esperado: $PAQUETE_ESPERADO"
+  if tiene gh && gh auth status >/dev/null 2>&1; then
+    ok "gh: sesión iniciada como $(gh api user --jq .login 2>/dev/null || echo '?')"
+    local push; push=$(gh api "repos/$REPO" --jq .permissions.push 2>/dev/null)
+    [ "$push" = "true" ] && ok "Permiso de escritura en $REPO" || aviso "Sin permiso de escritura verificado en $REPO"
+  else
+    aviso "gh sin sesión iniciada (necesaria para publicar)"
+  fi
+  if [ -f "$SEL_FILE" ]; then leer_seleccion; ok "APK seleccionado: $APK_PATH"; else aviso "Aún no hay APK seleccionado"; fi
+  if tiene curl; then
+    local web; web=$(curl -s --max-time 20 "$PAGES_URL/release.json?t=$(date +%s)")
+    [ -n "$web" ] && ok "Web publicada: estado «$(json_campo status "$web")»" || aviso "No pude leer $PAGES_URL/release.json"
+  fi
+  info "\nNo se modificó nada."
+}
+
+cmd_seleccionar() {
+  cargar_config
+  local ruta="${1:-}"
+  [ -n "$ruta" ] || die "Uso: lanzamiento-oficial seleccionar /ruta/al/archivo.apk"
+  [ -f "$ruta" ] || die "No existe el archivo: $ruta (en Descargas: ~/storage/downloads/NOMBRE.apk; si falta, ejecuta termux-setup-storage)"
+  [ -s "$ruta" ] || die "El archivo está vacío: $ruta"
+  case "${ruta,,}" in *.apk) ;; *) die "El archivo no termina en .apk: $ruta" ;; esac
+  local abs; abs=$(realpath "$ruta") || die "No pude resolver la ruta."
+  validar_zip "$abs"
+  local sha tam; sha=$(sha256_de "$abs"); tam=$(tam_de "$abs")
+  leer_metadata "$abs"; leer_firma "$abs"
+  info "${B}APK seleccionado${N}: $abs"
+  info "  Tamaño:    $tam bytes ($(mb_de "$tam"))"
+  info "  SHA-256:   $sha"
+  mostrar_apk
+  ( umask 077; printf 'ruta=%s\nsha256=%s\ntam=%s\nseleccionado=%s\n' "$abs" "$sha" "$tam" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SEL_FILE" )
+  ok "Guardado. Ahora puedes ejecutar: lanzamiento-oficial --simulacro"
+}
+
+cmd_estado() {
+  cargar_config
+  info "${B}APK seleccionado${N}"
+  if [ -f "$SEL_FILE" ]; then
+    leer_seleccion; info "  Ruta:    $APK_PATH"; info "  SHA-256: $SEL_SHA"
+    if [ -s "$APK_PATH" ]; then [ "$(sha256_de "$APK_PATH")" = "$SEL_SHA" ] && ok "El archivo coincide con lo seleccionado" || aviso "El archivo CAMBIÓ desde que lo seleccionaste"; else aviso "El archivo ya no existe o está vacío"; fi
+  else info "  (ninguno)"; fi
+  info "${B}Web publicada${N} ($PAGES_URL)"
+  local web; web=$(curl -s --max-time 20 "$PAGES_URL/release.json?t=$(date +%s)")
+  if [ -n "$web" ]; then
+    info "  Estado:  $(json_campo status "$web")"
+    [ "$(json_campo status "$web")" = "available" ] && { info "  Versión: $(json_campo version "$web")"; info "  Tamaño:  $(json_campo size_bytes "$web") bytes"; info "  SHA-256: $(json_campo sha256 "$web")"; }
+  else aviso "No pude leer release.json de la web"; fi
+}
+
+cmd_publicar() {
+  local SIMULACRO=0 REDESCARGA=1 VERSION_MANUAL=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --simulacro) SIMULACRO=1 ;;
+      --sin-redescarga) REDESCARGA=0 ;;
+      --version) shift; VERSION_MANUAL="${1:-}" ;;
+      *) die "Opción desconocida: $1" ;;
+    esac; shift
+  done
+  cargar_config
+  info "${B}Lanzamiento oficial de MusicNous${N}$([ "$SIMULACRO" = 1 ] && echo '  [SIMULACRO: no se publicará nada]')"
+  comprobar_gh
+  ok "gh con sesión y permiso de escritura en $REPO"
+
+  # 1-2. APK seleccionado: existe, no está vacío y es el mismo que elegiste
+  leer_seleccion
+  [ -f "$APK_PATH" ] || die "El APK seleccionado ya no existe: $APK_PATH"
+  [ -s "$APK_PATH" ] || die "El APK seleccionado está vacío: $APK_PATH"
+  validar_zip "$APK_PATH"
+  # 3. SHA-256 y tamaño
+  local SHA TAM; SHA=$(sha256_de "$APK_PATH"); TAM=$(tam_de "$APK_PATH")
+  [ "$SHA" = "$SEL_SHA" ] || die "El archivo cambió desde que lo seleccionaste (SHA-256 distinto). Vuelve a ejecutar: lanzamiento-oficial seleccionar $APK_PATH"
+  ok "APK: $APK_PATH ($TAM bytes, $(mb_de "$TAM"))"
+  # 4. Versión, paquete y firma
+  leer_metadata "$APK_PATH"; leer_firma "$APK_PATH"
+  local SIN_VERIFICAR=""
+  if [ "$META_OK" != "si" ]; then
+    [ -n "$VERSION_MANUAL" ] || die "No pude leer la versión del APK (falta aapt: pkg install aapt). Si aun así quieres continuar, indica la versión: --version X.Y.Z"
+    VNAME="$VERSION_MANUAL"; VCODE="0"; SIN_VERIFICAR="${SIN_VERIFICAR} VERSION"
+    aviso "Versión indicada a mano ($VNAME): no verificada contra el APK."
+  fi
+  mostrar_apk
+  [[ "$VNAME" =~ ^[0-9A-Za-z][0-9A-Za-z._-]{0,39}$ ]] || die "Versión no válida para publicar: «$VNAME»"
+  [[ "$VCODE" =~ ^[0-9]+$ ]] || VCODE=0
+  if [ "$META_OK" = "si" ]; then
+    [ -n "$PAQUETE_ESPERADO" ] && [ "$PKG" != "$PAQUETE_ESPERADO" ] && die "El paquete del APK ($PKG) no es el esperado ($PAQUETE_ESPERADO). Si es correcto, cámbialo en $CONF_FILE."
+    [ "$DEBUGGABLE" = "no" ] || die "El APK es depurable (compilación de prueba). No se publica."
+  fi
+  case "$FIRMA" in
+    invalida) die "La firma del APK NO es válida (apksigner la rechazó). No se publica." ;;
+    no-comprobada) SIN_VERIFICAR="${SIN_VERIFICAR} FIRMA"; aviso "No pude verificar la firma (falta apksigner: pkg install apksigner)." ;;
+  esac
+  [ "$FIRMA_DEBUG" = "no" ] || die "El APK está firmado con el certificado de depuración de Android. No se publica."
+  if printf '%s' "$VNAME" | grep -Eqi '(debug|test|prueba|beta|alpha|rc[0-9]*|snapshot|dev|nightly)'; then
+    die "El nombre de versión «$VNAME» parece de pruebas. No se publica."
+  fi
+  local TAG="v$VNAME" ASSET="MusicNous-$VNAME.apk"
+  local APK_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+  local REL_URL="https://github.com/$REPO/releases/tag/$TAG"
+
+  # Sin sobrescribir: ni la publicación (borrador incluido) ni la etiqueta pueden existir
+  local existente
+  existente=$(gh api "repos/$REPO/releases" --paginate --jq '.[] | select(.tag_name=="'"$TAG"'") | .id' 2>/dev/null | head -1)
+  [ -z "$existente" ] || die "Ya existe una publicación (o borrador) con la etiqueta $TAG. No se sobrescribe. Sube el número de versión del APK o resuélvelo tú en GitHub."
+  if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then die "La etiqueta $TAG ya existe en el repositorio. No se sobrescribe."; fi
+  ok "La versión $TAG no existe todavía"
+
+  # Lo ya publicado en la web: nunca retroceder a una versión anterior
+  local ACTUAL="" JSON_SHA=""
+  JSON_SHA=$(json_sha_publicado) || JSON_SHA=""
+  if [ -n "$JSON_SHA" ]; then ACTUAL=$(json_contenido_publicado) || ACTUAL=""; else aviso "No existe release.json en el repositorio; se creará."; fi
+  if [ "$(json_campo status "$ACTUAL")" = "available" ]; then
+    local vcode_pub vname_pub; vcode_pub=$(json_campo version_code "$ACTUAL"); vname_pub=$(json_campo version "$ACTUAL")
+    info "  Publicado actualmente en la web: $vname_pub (código ${vcode_pub:-?})"
+    if [[ "$vcode_pub" =~ ^[0-9]+$ ]] && [ "$VCODE" -gt 0 ]; then
+      [ "$VCODE" -gt "$vcode_pub" ] || die "Este APK (código $VCODE) no es más nuevo que el publicado ($vcode_pub). No se publica."
+    else
+      aviso "No pude comparar con la versión publicada ($vname_pub); revisa que sea más nueva."
+      SIN_VERIFICAR="${SIN_VERIFICAR} COMPARACION"
+    fi
+  fi
+
+  # Aviso si es antes de la fecha
+  local ahora objetivo; ahora=$(date -u +%s); objetivo=$(date -u -d "$LANZAMIENTO_UTC" +%s 2>/dev/null || echo 0)
+  if [ "$objetivo" -gt 0 ] && [ "$ahora" -lt "$objetivo" ]; then
+    aviso "Todavía no es la fecha de lanzamiento ($LANZAMIENTO_UTC). Si publicas ahora, la descarga se activará en la web desde ya."
+    SIN_VERIFICAR="${SIN_VERIFICAR} FECHA"
+  fi
+
+  info "\n${B}Se va a publicar${N}"
+  info "  Repositorio: $REPO"
+  info "  Etiqueta:    $TAG"
+  info "  Archivo:     $ASSET ($(mb_de "$TAM"))"
+  info "  SHA-256:     $SHA"
+  info "  Enlace:      $APK_URL"
+  info "  Web:         se actualizará release.json (rama $RAMA)"
+  if [ "$SIMULACRO" = 1 ]; then
+    ok "Simulacro terminado: todas las comprobaciones previas pasaron. No se publicó nada."
+    [ -n "$SIN_VERIFICAR" ] && aviso "Pendientes en una publicación real:$SIN_VERIFICAR"
+    return 0
+  fi
+
+  # 5. Confirmación explícita
+  local frase="PUBLICAR $TAG" resp
+  [ -z "$SIN_VERIFICAR" ] || frase="$frase CON AVISOS"
+  info "\nPara continuar escribe exactamente:  $frase"
+  printf '> '
+  IFS= read -r resp < "$TTY_IN" || die "No pude leer la confirmación."
+  [ "$resp" = "$frase" ] || die "Confirmación incorrecta. No se publicó nada."
+
+  # 6. Borrador con el APK (nada es público todavía)
+  TMPDIR_PUB=$(mktemp -d) || die "No pude crear un directorio temporal."
+  trap 'rm -rf "${TMPDIR_PUB:-}"' EXIT
+  ln -s "$APK_PATH" "$TMPDIR_PUB/$ASSET" 2>/dev/null || cp "$APK_PATH" "$TMPDIR_PUB/$ASSET" || die "No pude preparar el archivo para subirlo."
+  local notas="APK oficial de MusicNous $VNAME
+
+- Paquete: ${PKG:-desconocido}
+- SHA-256 del APK: $SHA
+- Firma (SHA-256 del certificado): ${FIRMA_SHA:-no comprobada}"
+  info "\nSubiendo el APK como borrador…"
+  gh release create "$TAG" "$TMPDIR_PUB/$ASSET" --repo "$REPO" --target "$RAMA" --draft --title "MusicNous $VNAME" --notes "$notas" >/dev/null \
+    || die "No se pudo crear el borrador. No se publicó nada. (Revisa si quedó un borrador $TAG en GitHub antes de reintentar.)"
+  # 7a. Comprobar la subida
+  local rid linea est tam_sub dig
+  rid=$(gh api "repos/$REPO/releases" --paginate --jq '.[] | select(.tag_name=="'"$TAG"'") | .id' 2>/dev/null | head -1)
+  [ -n "$rid" ] || die "Subí el borrador pero no lo encuentro. Revisa GitHub. La web NO se modificó."
+  linea=$(gh api "repos/$REPO/releases/$rid/assets" --jq '.[] | select(.name=="'"$ASSET"'") | "\(.state) \(.size) \(.digest // "")"' 2>/dev/null | head -1)
+  read -r est tam_sub dig <<< "$linea"
+  [ "$est" = "uploaded" ] || die "La subida no terminó (estado: ${est:-desconocido}). Borrador $TAG sin publicar; la web NO se modificó."
+  [ "$tam_sub" = "$TAM" ] || die "El tamaño subido ($tam_sub) no coincide con el local ($TAM). Borrador sin publicar; la web NO se modificó."
+  if [ -n "$dig" ] && [ "$dig" != "sha256:$SHA" ]; then die "GitHub reporta un hash distinto ($dig). Borrador sin publicar; la web NO se modificó."; fi
+  ok "Subida verificada en el borrador ($tam_sub bytes${dig:+, hash coincide})"
+
+  # Publicar el borrador
+  gh release edit "$TAG" --repo "$REPO" --draft=false --latest >/dev/null \
+    || die "No se pudo publicar el borrador $TAG. La web NO se modificó."
+  ok "Publicación $TAG creada"
+
+  # 7b. El archivo es accesible públicamente y es el correcto
+  info "Comprobando el enlace público…"
+  verificar_url_publica "$APK_URL" "$TAM" || die "El enlace público NO responde con el archivo correcto: $APK_URL
+La publicación $TAG ya existe en GitHub, pero la web NO se modificó (sigue en «Próximamente»). Revisa $REL_URL"
+  ok "El enlace responde con HTTP 200 y el tamaño correcto"
+  if [ "$REDESCARGA" = 1 ]; then
+    info "Descargando el APK publicado para comparar el SHA-256 (usa unos $(mb_de "$TAM") de datos)…"
+    verificar_redescarga "$APK_URL" "$SHA" || die "El archivo publicado NO coincide con tu APK (SHA-256 distinto). La web NO se modificó. Revisa $REL_URL"
+    ok "El archivo publicado coincide con tu APK (SHA-256)"
+  else
+    aviso "Omitiste la redescarga: el hash del archivo público no se comparó."
+  fi
+
+  # 8. Actualizar release.json (solo ahora, con todo verificado)
+  local nuevo b64 msg="Publicar MusicNous $VNAME en la web"
+  nuevo=$(cat <<JSON
+{
+  "schema": 1,
+  "status": "available",
+  "version": "$VNAME",
+  "version_code": $VCODE,
+  "package": "${PKG:-}",
+  "tag": "$TAG",
+  "apk_name": "$ASSET",
+  "apk_url": "$APK_URL",
+  "release_url": "$REL_URL",
+  "size_bytes": $TAM,
+  "sha256": "$SHA",
+  "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSON
+)
+  b64=$(printf '%s\n' "$nuevo" | base64 | tr -d '\n')
+  if [ -n "$JSON_SHA" ]; then
+    gh api -X PUT "repos/$REPO/contents/release.json" -f message="$msg" -f content="$b64" -f branch="$RAMA" -f sha="$JSON_SHA" >/dev/null
+  else
+    gh api -X PUT "repos/$REPO/contents/release.json" -f message="$msg" -f content="$b64" -f branch="$RAMA" >/dev/null
+  fi || die "El APK está publicado y verificado, pero NO pude actualizar release.json. La web sigue en «Próximamente». Reintenta cuando tengas conexión o edita release.json a mano con estos datos:
+$nuevo"
+  ok "release.json actualizado en $RAMA"
+
+  # 9. Verificar la web publicada (GitHub Pages tarda 1-3 minutos)
+  info "Esperando a que GitHub Pages publique el cambio…"
+  local i cont web_ok=0
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    cont=$(curl -s --max-time 20 "$PAGES_URL/release.json?t=$(date +%s)")
+    if [ "$(json_campo status "$cont")" = "available" ] && [ "$(json_campo version "$cont")" = "$VNAME" ] && [ "$(json_campo sha256 "$cont")" = "$SHA" ]; then web_ok=1; break; fi
+    esperar 15
+  done
+
+  info "\n${B}INFORME FINAL${N}"
+  info "  Versión:         $VNAME (código $VCODE)"
+  info "  Paquete:         ${PKG:-desconocido}"
+  info "  Tamaño:          $TAM bytes ($(mb_de "$TAM"))"
+  info "  SHA-256:         $SHA"
+  info "  Firma:           $FIRMA${FIRMA_SHA:+ · cert $FIRMA_SHA}"
+  info "  Publicación:     $REL_URL"
+  info "  Enlace directo:  $APK_URL"
+  info "  Enlace público:  HTTP 200 y tamaño correcto"
+  [ "$REDESCARGA" = 1 ] && info "  Hash descargado: coincide"
+  if [ "$web_ok" = 1 ]; then ok "Web actualizada: $PAGES_URL/ ya ofrece la descarga."
+  else aviso "release.json ya está en el repositorio, pero GitHub Pages todavía no lo muestra. Es normal que tarde unos minutos: abre $PAGES_URL/ y comprueba el botón."; fi
+  info "\nÚltimo paso (tuyo): abre la web en tu teléfono, pulsa «Descargar MusicNous» y confirma que baja $ASSET."
+}
+
+# ---------- entrada ----------
+case "${1:-}" in
+  doctor)        shift; cmd_doctor "$@" ;;
+  seleccionar)   shift; cmd_seleccionar "$@" ;;
+  estado)        shift; cmd_estado "$@" ;;
+  ayuda|-h|--help) sed -n '2,13p' "$0" ;;
+  publicar)      shift; cmd_publicar "$@" ;;
+  ''|--*)        cmd_publicar "$@" ;;
+  *)             die "Comando desconocido: $1 (usa: doctor, seleccionar, estado, publicar, --simulacro)" ;;
+esac
