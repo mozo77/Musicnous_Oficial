@@ -37,4 +37,8 @@
 .secure-links{display:flex;justify-content:center;flex-wrap:wrap;gap:6px 18px;margin-top:10px;font-size:11px}
 .secure-links a,.link-button{color:var(--cyan);background:none;border:0;padding:0;font:inherit;text-decoration:underline;cursor:pointer}
 .button[aria-pressed="true"]{box-shadow:none;filter:saturate(.8)}
+/* Video de presentación */
+.promo-video{max-width:540px;margin:28px auto 0}
+.promo-video video{display:block;width:100%;height:auto;aspect-ratio:1/1;border-radius:18px;border:1px solid rgba(150,111,255,.3);background:#05040a;box-shadow:0 0 38px rgba(77,231,245,.12),0 0 70px rgba(156,101,255,.12)}
+.promo-video figcaption{margin-top:10px;font-size:11px;color:var(--muted);text-align:center}
 

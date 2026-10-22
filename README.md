@@ -11,6 +11,7 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 - `tools/lanzamiento-oficial` y `tools/instalar-termux.sh`: publicación del lanzamiento desde Termux.
 - `assets/logo-mark.png`: emblema del logotipo (fondo transparente) usado en la cabecera y el pie.
 - `assets/logo-og.jpg`: logotipo completo de MusicNous, usado como imagen al compartir el enlace.
+- `assets/MusicNous-promo.mp4` y `assets/promo-poster.jpg`: video de presentación (8 s, 1 MB, H.264 + AAC) y su imagen de portada. No se descarga hasta que el visitante pulsa reproducir.
 - `assets/favicon.png`: icono de la pestaña (`assets/favicon.svg` es el icono anterior y ya no se usa).
 
 ## Cuenta regresiva y descarga
