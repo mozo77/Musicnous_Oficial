@@ -95,9 +95,9 @@ leer_firma() {  # $1 = apk → FIRMA (valida|invalida|no-comprobada) FIRMANTE FI
   local out
   if out=$(apksigner verify --verbose --print-certs "$1" 2>&1); then
     FIRMA="valida"
-    FIRMANTE=$(printf '%s\n' "$out" | sed -n 's/^Signer #1 certificate DN: //p' | head -1)
-    FIRMA_SHA=$(printf '%s\n' "$out" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
-    printf '%s' "$FIRMANTE" | grep -qi 'Android Debug' && FIRMA_DEBUG="si"
+    FIRMANTE=$(printf '%s\n' "$out" | sed -n 's/^.*certificate DN: *//p' | head -1)
+    FIRMA_SHA=$(printf '%s\n' "$out" | sed -n 's/^.*certificate SHA-256 digest: *//p' | head -1)
+    printf '%s' "$out" | grep -qi 'Android Debug' && FIRMA_DEBUG="si"
   else
     FIRMA="invalida"
   fi
@@ -148,7 +148,7 @@ mostrar_apk() {
   info "  Versión:   ${VNAME:-(desconocida)}  (código ${VCODE:-?})"
   info "  Depurable: $DEBUGGABLE"
   case "$FIRMA" in
-    valida) info "  Firma:     válida · $FIRMANTE" ; info "  Cert. SHA-256: $FIRMA_SHA" ;;
+    valida) if [ -n "$FIRMANTE" ]; then info "  Firma:     válida · $FIRMANTE"; info "  Cert. SHA-256: ${FIRMA_SHA:-(no leído)}"; else info "  Firma:     válida, pero NO pude leer el certificado"; fi ;;
     invalida) info "  Firma:     INVÁLIDA" ;;
     *) info "  Firma:     no comprobada (apksigner no disponible)" ;;
   esac
@@ -263,6 +263,10 @@ cmd_publicar() {
     no-comprobada) SIN_VERIFICAR="${SIN_VERIFICAR} FIRMA"; aviso "No pude verificar la firma (falta apksigner: pkg install apksigner)." ;;
   esac
   [ "$FIRMA_DEBUG" = "no" ] || die "El APK está firmado con el certificado de depuración de Android. No se publica."
+  if [ "$FIRMA" = "valida" ] && [ -z "$FIRMANTE" ]; then
+    SIN_VERIFICAR="${SIN_VERIFICAR} CERTIFICADO"
+    aviso "La firma es válida, pero no pude leer el certificado: no puedo descartar que sea el de depuración. Revísalo con: apksigner verify --verbose --print-certs \"$APK_PATH\""
+  fi
   if printf '%s' "$VNAME" | grep -Eqi '(debug|test|prueba|beta|alpha|rc[0-9]*|snapshot|dev|nightly)'; then
     die "El nombre de versión «$VNAME» parece de pruebas. No se publica."
   fi
