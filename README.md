@@ -31,6 +31,14 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 7. Abre la URL en el teléfono y en un computador. Comprueba menú móvil, secciones, enlaces y lectura del contenido.
 8. Cuando publiques el APK con `lanzamiento-oficial`, comprueba en la web el botón de descarga.
 
+## «Asegurar tu descarga»
+
+- El botón guarda una solicitud **solo en el navegador del visitante** (`localStorage`: fecha y estado). No se envía ningún dato a un servidor y no existe una lista de usuarios.
+- Cuando el APK está publicado y verificado (`release.json`), la descarga **empieza sola una vez por versión** al abrir esta página en ese mismo navegador, o en cuanto se publica si la página ya está abierta. Si el navegador la bloquea, queda el botón «Descargar MusicNous».
+- **No instala nada automáticamente.** Android exige que cada usuario confirme la instalación (y permita instalar apps de esta fuente); ninguna web puede evitarlo.
+- Si el visitante borra los datos del navegador, usa otro navegador u otro dispositivo, tendrá que asegurarla de nuevo. El enlace «Añadir recordatorio al calendario» abre Google Calendar con el evento del 31/10/2026 (solo se carga si el usuario lo pulsa).
+- Para avisar a personas que no vuelvan a la página (correo o notificaciones push) haría falta un servicio externo y un aviso de privacidad; la web actual no lo incluye.
+
 ## Publicar el lanzamiento desde Termux
 
 ### Configuración segura (una sola vez)

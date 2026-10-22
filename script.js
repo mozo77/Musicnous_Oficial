@@ -21,6 +21,7 @@
     pollMs: 60000,
   };
 
+  const STORE_KEY = "musicnous:descarga-asegurada";
   const BRAND = '<span class="nt" translate="no">MusicNous</span>';
   const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]{0,39}$/;
   const SHA_RE = /^[0-9a-f]{64}$/;
@@ -112,6 +113,20 @@
     }
   }
 
+  // Solicitud de descarga asegurada: se guarda SOLO en este navegador (no se envía a ningún servidor).
+  function readSecured() {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return null;
+      const v = JSON.parse(raw);
+      return v && typeof v === "object" ? v : null;
+    } catch (e) { return null; }
+  }
+  function writeSecured(value) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(value)); return readSecured() !== null; } catch (e) { return false; }
+  }
+  function clearSecured() { try { localStorage.removeItem(STORE_KEY); } catch (e) { /* sin almacenamiento */ } }
+
   // ---------- Interfaz ----------
 
   function init() {
@@ -122,11 +137,29 @@
       launch: $("launch-message"), launchTitle: $("launch-title"), launchText: $("launch-text"),
       button: $("download-button"), label: $("download-button-label"), status: $("download-status"),
       info: $("download-info"), integrity: $("download-integrity"), sha: $("download-sha"), alt: $("download-alt"),
+      secureBox: $("secure-box"), secureButton: $("secure-button"), secureText: $("secure-text"), secureCancel: $("secure-cancel"),
     };
     const launchTime = Date.parse(CONFIG.launchAt);
-    const state = { release: { state: "coming-soon" }, launched: false, timer: null, poll: null, busy: false };
+    const state = { release: { state: "coming-soon" }, launched: false, timer: null, poll: null, busy: false, secured: readSecured(), autoTried: false, secureError: false };
 
     function setStatus(html) { if (el.status) el.status.innerHTML = html; }
+
+    function renderSecure(available, rel) {
+      if (!el.secureBox) return;
+      el.secureBox.hidden = available;      // con la descarga disponible ya no hace falta asegurarla
+      if (available) return;
+      const secured = !!state.secured;
+      el.secureButton.textContent = secured ? "✓ Descarga asegurada" : "Asegurar tu descarga";
+      el.secureButton.setAttribute("aria-pressed", String(secured));
+      if (el.secureCancel) el.secureCancel.hidden = !secured;
+      if (state.secureError) {
+        el.secureText.textContent = "Tu navegador no permite guardar esto (modo privado o datos bloqueados). Añade el recordatorio al calendario o vuelve a esta página el día del lanzamiento.";
+      } else if (secured) {
+        el.secureText.textContent = "Listo. Guardamos tu lugar en este dispositivo: cuando la descarga esté disponible, empezará al abrir esta página en este mismo navegador. Si borras los datos del navegador, tendrás que asegurarla de nuevo. Android te pedirá confirmar la instalación.";
+      } else {
+        el.secureText.textContent = "Guarda tu lugar en este dispositivo. Cuando la versión oficial esté publicada y verificada, la descarga empezará al abrir esta página. Android te pedirá confirmar la instalación.";
+      }
+    }
 
     function render() {
       if (!el.button) return;
@@ -148,6 +181,8 @@
           el.launchText.innerHTML = "Gracias por acompañarnos en el lanzamiento oficial de " + BRAND + ".";
         }
       }
+
+      renderSecure(available, rel);
 
       if (available) {
         el.button.href = rel.url;
@@ -180,6 +215,9 @@
         let info = evaluateRelease(await res.json(), CONFIG.repo);
         if (info.state === "available" && (await verifyWithGitHub(info, CONFIG.repo)) === "missing") info = { state: "unavailable" };
         state.release = info;
+        render();
+        await maybeAutoStart();
+        return;
       } catch (e) {
         // Sin release.json legible nunca se ofrece una descarga.
         if (state.release.state !== "available") state.release = { state: "coming-soon" };
@@ -219,25 +257,60 @@
       state.timer = setTimeout(tick, (ms % 1000) + 5);
     }
 
-    if (el.button) {
-      el.button.addEventListener("click", async function (event) {
-        event.preventDefault();
-        const rel = state.release;
-        if (rel.state !== "available" || state.busy) return;
-        state.busy = true;
-        setStatus("Preparando la descarga…");
-        try {
-          await preflight(rel.url);
-        } catch (e) {
-          setStatus("No se pudo iniciar la descarga. Comprueba tu conexión e inténtalo de nuevo.");
-          if (el.alt) { el.alt.href = rel.releaseUrl; el.alt.hidden = false; }
-          state.busy = false;
-          return;
-        }
-        setStatus("Descarga iniciada. Si no empieza, abre la página de esta versión y descarga el APK desde allí.");
+    // Inicia la descarga del APK verificado. auto=true cuando la dispara una descarga asegurada.
+    async function startDownload(auto) {
+      const rel = state.release;
+      if (rel.state !== "available" || state.busy) return false;
+      state.busy = true;
+      setStatus(auto ? "Tu descarga asegurada está lista. Preparando…" : "Preparando la descarga…");
+      try {
+        await preflight(rel.url);
+      } catch (e) {
+        setStatus("No se pudo iniciar la descarga. Comprueba tu conexión e inténtalo de nuevo.");
         if (el.alt) { el.alt.href = rel.releaseUrl; el.alt.hidden = false; }
-        window.location.assign(rel.url);
         state.busy = false;
+        return false;
+      }
+      setStatus(auto
+        ? "Tu descarga asegurada empezó automáticamente. Si no ves la descarga, toca «Descargar " + BRAND + "»."
+        : "Descarga iniciada. Si no empieza, abre la página de esta versión y descarga el APK desde allí.");
+      if (el.alt) { el.alt.href = rel.releaseUrl; el.alt.hidden = false; }
+      window.location.assign(rel.url);
+      state.busy = false;
+      return true;
+    }
+
+    // Descarga asegurada + APK publicado y verificado: un único intento automático por versión.
+    async function maybeAutoStart() {
+      const rel = state.release;
+      if (rel.state !== "available" || !state.secured || state.autoTried) return;
+      if (state.secured.done === rel.version) return;
+      state.autoTried = true;
+      if (await startDownload(true)) {
+        state.secured = { savedAt: state.secured.savedAt, done: rel.version };
+        writeSecured(state.secured);
+      }
+    }
+
+    if (el.button) {
+      el.button.addEventListener("click", function (event) {
+        event.preventDefault();
+        startDownload(false);
+      });
+    }
+
+    if (el.secureButton) {
+      el.secureButton.addEventListener("click", function () {
+        if (state.secured) return;
+        const value = { savedAt: new Date().toISOString(), done: null };
+        if (writeSecured(value)) { state.secured = value; state.secureError = false; }
+        else { state.secured = null; state.secureError = true; }
+        render();
+      });
+    }
+    if (el.secureCancel) {
+      el.secureCancel.addEventListener("click", function () {
+        clearSecured(); state.secured = null; state.secureError = false; render();
       });
     }
 
