@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# lanzamiento-ensayo — ensayo general del lanzamiento en un repositorio de PRUEBAS.
+# Ejecuta exactamente el mismo comando «lanzamiento-oficial», pero con otra configuración
+# (repositorio, web y carpeta de ajustes distintos). No toca el repositorio oficial.
+#
+# Uso:
+#   lanzamiento-ensayo preparar USUARIO/REPO [PAQUETE]    Crea la configuración del ensayo (PAQUETE: id de la app,
+#                                                         p. ej. io.github.jmoxs77.musicnous.pruebas)
+#   lanzamiento-ensayo [doctor | --simulacro | ...]       Igual que lanzamiento-oficial, pero en pruebas
+set -u
+OFICIAL="mozo77/Musicnous_Oficial"
+DIR_PRUEBA="${MUSICNOUS_CONF_DIR_PRUEBA:-$HOME/.config/musicnous-prueba}"
+CONF="$DIR_PRUEBA/lanzamiento.conf"
+AQUI="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+if [ -t 1 ]; then R=$'\033[31m'; Y=$'\033[33m'; B=$'\033[1m'; N=$'\033[0m'; else R=; Y=; B=; N=; fi
+die() { printf '%s✖ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
+
+repo_de_conf() { grep '^REPO=' "$CONF" 2>/dev/null | head -1 | sed 's/^REPO="\(.*\)"$/\1/'; }
+
+case "${1:-}" in
+  preparar)
+    repo="${2:-}"
+    [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "Uso: lanzamiento-ensayo preparar USUARIO/REPOSITORIO_DE_PRUEBAS (por ejemplo mozo77/Musicnous_Pruebas)"
+    [ "${repo,,}" != "${OFICIAL,,}" ] || die "Ese es el repositorio OFICIAL. El ensayo necesita uno de pruebas distinto."
+    paquete="${3:-}"
+    if [ -n "$paquete" ]; then [[ "$paquete" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || die "El identificador de paquete no es válido: $paquete"; fi
+    dueno="${repo%%/*}"; nombre="${repo#*/}"
+    mkdir -p "$DIR_PRUEBA" && chmod 700 "$DIR_PRUEBA" 2>/dev/null
+    ( umask 077; cat > "$CONF" <<CONF
+# Configuración del ENSAYO (repositorio de pruebas). No pongas tokens aquí.
+REPO="$repo"
+RAMA="main"
+PAGES_URL="https://${dueno,,}.github.io/$nombre"
+# Fecha ya pasada: así el ensayo pide la misma frase de confirmación que el día del lanzamiento.
+LANZAMIENTO_UTC="2026-10-01T00:00:00Z"
+CONF
+      if [ -n "$paquete" ]; then printf '# Paquete de la app de pruebas (el menú rechaza APK de otro paquete):\nPAQUETE_ESPERADO="%s"\n' "$paquete" >> "$CONF"; fi
+    )
+    printf '%s✔ Ensayo preparado%s: repositorio %s\n' "$B" "$N" "$repo"
+    echo "  Web de pruebas: https://${dueno,,}.github.io/$nombre"
+    echo "  Ajustes:        $CONF"
+    [ -z "$paquete" ] || echo "  Paquete:        $paquete"
+    echo "Pasos que faltan (en GitHub): el repositorio debe ser PÚBLICO, tener una rama main con al menos un archivo,"
+    echo "y GitHub Pages activado (Settings → Pages → Deploy from a branch → main → /(root))."
+    echo "Usa un token SOLO de ese repositorio (Contents: Read and write)."
+    ;;
+  -h|--help|ayuda)
+    sed -n '2,9p' "$0" ;;
+  *)
+    [ -f "$CONF" ] || die "Primero prepara el ensayo: lanzamiento-ensayo preparar USUARIO/REPOSITORIO_DE_PRUEBAS"
+    repo="$(repo_de_conf)"
+    [ -n "$repo" ] || die "No encuentro REPO en $CONF"
+    [ "${repo,,}" != "${OFICIAL,,}" ] || die "La configuración del ensayo apunta al repositorio OFICIAL ($repo). Corrígela con: lanzamiento-ensayo preparar USUARIO/REPOSITORIO_DE_PRUEBAS"
+    printf '%s%s════ ENSAYO ════ repositorio de PRUEBAS: %s — no se toca el oficial%s\n' "$Y" "$B" "$repo" "$N"
+    exec env MUSICNOUS_CONF_DIR="$DIR_PRUEBA" "$AQUI/lanzamiento-oficial" "$@"
+    ;;
+esac

@@ -4,12 +4,16 @@
 #
 # Uso:
 #   lanzamiento-oficial doctor                  Revisa tu entorno (no modifica nada)
-#   lanzamiento-oficial seleccionar RUTA.apk    Elige el APK final
+#   lanzamiento-oficial seleccionar [RUTA.apk]  Elige el APK final (sin ruta: abre el menú)
 #   lanzamiento-oficial estado                  Muestra el APK elegido y lo publicado
-#   lanzamiento-oficial [--simulacro]           Publica. Con --simulacro hace todas las
-#                                               comprobaciones y se detiene antes de publicar.
-#   Opciones de publicación: --sin-redescarga   No vuelve a descargar el APK para comprobar el hash
-#                            --version X.Y.Z    Solo si no hay aapt: indica la versión a mano
+#   lanzamiento-oficial [--simulacro]           Abre el menú de APK de Descargas y publica.
+#                                               Con --simulacro hace todas las comprobaciones
+#                                               y se detiene antes de publicar.
+#   Opciones de publicación: --apk RUTA            Usa ese APK sin abrir el menú
+#                            --seleccion-guardada  Usa el APK elegido antes (sin menú)
+#                            --sin-redescarga      No vuelve a descargar el APK para comprobar el hash
+#                            --version X.Y.Z       Solo si no hay aapt: indica la versión a mano
+# Menú: ↑/↓ (o k/j) mover · Enter elegir · r releer · q salir. Solo deja elegir APK firmados.
 set -u
 set -o pipefail
 
@@ -23,7 +27,11 @@ REPO="mozo77/Musicnous_Oficial"
 RAMA="main"
 PAGES_URL="https://mozo77.github.io/Musicnous_Oficial"
 PAQUETE_ESPERADO="io.github.jmoxs77.musicnous"
-LANZAMIENTO_UTC="2026-10-31T05:00:00Z"   # 31/10/2026 00:00 en Colombia
+LANZAMIENTO_UTC="2026-10-31T21:00:00Z"   # 31/10/2026 16:00 (4:00 p. m.) en Colombia
+# Huella SHA-256 del certificado de la clave oficial de MusicNous (vacía = no comparar):
+HUELLA_CERT_ESPERADA="77661c931f1512f6c213f17075b1c70d570635cb173eaeeaee5a9e10eaa888c7"
+DESCARGAS_DIR="${MUSICNOUS_DESCARGAS:-$HOME/storage/downloads}"
+CACHE_FILE="$CONF_DIR/cache_apks"
 
 # ---------- utilidades ----------
 if [ -t 1 ]; then R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; B=$'\033[1m'; N=$'\033[0m'; else R=; G=; Y=; B=; N=; fi
@@ -32,6 +40,14 @@ ok()    { printf '%s✔%s %s\n' "$G" "$N" "$*"; }
 aviso() { printf '%s⚠%s %s\n' "$Y" "$N" "$*"; }
 die()   { printf '%s✖ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
 esperar() { [ -n "${MUSICNOUS_SIN_ESPERA:-}" ] || sleep "$1"; }
+limpiar_salida() { [ -t 1 ] && printf '\033[?25h'; [ -n "${TMPDIR_PUB:-}" ] && rm -rf "$TMPDIR_PUB"; return 0; }
+trap limpiar_salida EXIT
+ENTRADA_ABIERTA=0
+abrir_entrada() {   # abre una sola vez el teclado (fd 3): menú y confirmación leen del mismo sitio
+  [ "$ENTRADA_ABIERTA" = 1 ] && return 0
+  : < "$TTY_IN" 2>/dev/null || die "No hay una terminal interactiva para leer el teclado."
+  exec 3< "$TTY_IN"; ENTRADA_ABIERTA=1
+}
 tiene() { command -v "$1" >/dev/null 2>&1; }
 sha256_de() { sha256sum "$1" | cut -d' ' -f1; }
 tam_de()    { wc -c < "$1" | tr -d ' '; }
@@ -49,6 +65,8 @@ PAGES_URL="$PAGES_URL"
 # Identificador de paquete que debe tener el APK (evita publicar otra app por error):
 PAQUETE_ESPERADO="$PAQUETE_ESPERADO"
 LANZAMIENTO_UTC="$LANZAMIENTO_UTC"
+# Huella SHA-256 del certificado de tu clave oficial (el menú rechaza APK firmados con otra):
+HUELLA_CERT_ESPERADA="$HUELLA_CERT_ESPERADA"
 CONF
   )
 }
@@ -58,7 +76,7 @@ cargar_config() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|\#*) continue ;; esac
-    if [[ "$line" =~ ^(REPO|RAMA|PAGES_URL|PAQUETE_ESPERADO|LANZAMIENTO_UTC)=\"([^\"]*)\"$ ]]; then
+    if [[ "$line" =~ ^(REPO|RAMA|PAGES_URL|PAQUETE_ESPERADO|LANZAMIENTO_UTC|HUELLA_CERT_ESPERADA)=\"([^\"]*)\"$ ]]; then
       printf -v "${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[2]}"
     else
       aviso "Línea ignorada en $CONF_FILE: $line"
@@ -154,6 +172,169 @@ mostrar_apk() {
   esac
 }
 
+
+version_de_prueba() { printf '%s' "$1" | grep -Eqi '(debug|test|prueba|beta|alpha|rc[0-9]*|snapshot|dev|nightly)'; }
+huella_norm() { printf '%s' "$1" | tr 'A-F' 'a-f' | tr -d ': \r'; }
+
+guardar_seleccion() {  # $1 = ruta del APK; deja APK elegido en SEL_FILE
+  local ruta="$1"
+  [ -f "$ruta" ] || die "No existe el archivo: $ruta (en Descargas: ~/storage/downloads/NOMBRE.apk; si falta, ejecuta termux-setup-storage)"
+  [ -s "$ruta" ] || die "El archivo está vacío: $ruta"
+  case "${ruta,,}" in *.apk) ;; *) die "El archivo no termina en .apk: $ruta" ;; esac
+  SEL_ABS=$(realpath "$ruta") || die "No pude resolver la ruta."
+  validar_zip "$SEL_ABS"
+  SEL_SHA_NUEVO=$(sha256_de "$SEL_ABS"); SEL_TAM_NUEVO=$(tam_de "$SEL_ABS")
+  mkdir -p "$CONF_DIR"
+  ( umask 077; printf 'ruta=%s\nsha256=%s\ntam=%s\nseleccionado=%s\n' "$SEL_ABS" "$SEL_SHA_NUEVO" "$SEL_TAM_NUEVO" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SEL_FILE" )
+}
+
+# Clasifica un APK ya analizado (usa ZIPOK META_OK PKG VNAME DEBUGGABLE FIRMA FIRMA_DEBUG FIRMA_SHA)
+# → ESTADO: ok (se puede elegir) | aviso (se puede elegir, con avisos) | no (no se puede elegir)
+clasificar() {
+  ESTADO="ok"; RAZON="firmada"
+  [ "$ZIPOK" = "si" ] || { ESTADO="no"; RAZON="no es un APK válido"; return; }
+  if [ "$META_OK" = "si" ]; then
+    if [ -n "$PAQUETE_ESPERADO" ] && [ "$PKG" != "$PAQUETE_ESPERADO" ]; then ESTADO="no"; RAZON="paquete distinto ($PKG)"; return; fi
+    [ "$DEBUGGABLE" = "no" ] || { ESTADO="no"; RAZON="compilación depurable"; return; }
+    if version_de_prueba "$VNAME"; then ESTADO="no"; RAZON="versión de pruebas"; return; fi
+  fi
+  [ "$FIRMA" != "invalida" ] || { ESTADO="no"; RAZON="sin firmar o firma inválida"; return; }
+  [ "$FIRMA_DEBUG" = "no" ] || { ESTADO="no"; RAZON="firma de depuración"; return; }
+  if [ "$FIRMA" = "valida" ] && [ -n "$FIRMA_SHA" ] && [ -n "$HUELLA_CERT_ESPERADA" ] && [ "$(huella_norm "$FIRMA_SHA")" != "$(huella_norm "$HUELLA_CERT_ESPERADA")" ]; then
+    ESTADO="no"; RAZON="firmada con otra clave"; return
+  fi
+  local av=""
+  [ "$META_OK" = "si" ] || av="versión no leída (falta aapt)"
+  [ "$FIRMA" != "no-comprobada" ] || av="firma sin comprobar (falta apksigner)"
+  if [ "$FIRMA" = "valida" ] && [ -z "$FIRMA_SHA" ]; then av="certificado ilegible"; fi
+  if [ -n "$av" ]; then ESTADO="aviso"; RAZON="$av"; fi
+}
+
+# Analiza un APK (con caché por ruta+tamaño+fecha) y lo clasifica
+analizar_apk() {  # $1 ruta  $2 tamaño  $3 fecha
+  local ruta="$1" tam="$2" mt="$3" linea usar=0
+  linea=$(grep -F -- "$ruta|$tam|$mt|" "$CACHE_FILE" 2>/dev/null | tail -1)
+  if [ -n "$linea" ]; then
+    IFS='|' read -r _ _ _ ZIPOK META_OK PKG VNAME VCODE DEBUGGABLE FIRMA FIRMA_DEBUG FIRMA_SHA <<< "$linea"
+    usar=1
+    { [ "$META_OK" = "no" ] && { tiene aapt || tiene aapt2; }; } && usar=0
+    { [ "$FIRMA" = "no-comprobada" ] && tiene apksigner; } && usar=0
+  fi
+  if [ "$usar" = 0 ]; then
+    ZIPOK="si"; META_OK="no"; PKG=""; VNAME=""; VCODE=""; DEBUGGABLE="no"; FIRMA="no-comprobada"; FIRMA_DEBUG="no"; FIRMA_SHA=""
+    if tiene unzip && ! unzip -tqq "$ruta" >/dev/null 2>&1; then ZIPOK="no"; fi
+    if [ "$ZIPOK" = "si" ]; then leer_metadata "$ruta"; leer_firma "$ruta"; fi
+    mkdir -p "$CONF_DIR"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$ruta" "$tam" "$mt" "$ZIPOK" "$META_OK" "$PKG" "$VNAME" "$VCODE" "$DEBUGGABLE" "$FIRMA" "$FIRMA_DEBUG" "$FIRMA_SHA" >> "$CACHE_FILE"
+    if [ "$(wc -l < "$CACHE_FILE" 2>/dev/null || echo 0)" -gt 300 ]; then tail -150 "$CACHE_FILE" > "$CACHE_FILE.tmp" && mv "$CACHE_FILE.tmp" "$CACHE_FILE"; fi
+  fi
+  clasificar
+}
+
+leer_tecla() {  # → TECLA = UP | DOWN | ENTER | QUIT | REFRESH | OTHER
+  local k r
+  IFS= read -rsn1 -u 3 k || { TECLA="QUIT"; return; }
+  case "$k" in
+    $'\e')
+      if IFS= read -rsn2 -t 0.2 -u 3 r; then
+        case "$r" in '[A'|'OA') TECLA="UP" ;; '[B'|'OB') TECLA="DOWN" ;; *) TECLA="OTHER" ;; esac
+      else TECLA="QUIT"; fi ;;
+    ''|$'\r') TECLA="ENTER" ;;
+    k|K) TECLA="UP" ;;
+    j|J) TECLA="DOWN" ;;
+    q|Q) TECLA="QUIT" ;;
+    r|R) TECLA="REFRESH" ;;
+    *) TECLA="OTHER" ;;
+  esac
+}
+
+recortar() { local t="$1" n="$2"; [ "${#t}" -le "$n" ] && printf '%s' "$t" || printf '%s…' "${t:0:$((n-1))}"; }
+
+cargar_lista_apks() {
+  IT_RUTA=(); IT_TAM=(); IT_MT=(); IT_ESTADO=(); IT_RAZON=(); IT_VNAME=(); IT_VCODE=(); IT_SHA=()
+  [ -d "$DESCARGAS_DIR" ] || die "No encuentro la carpeta de Descargas ($DESCARGAS_DIR). Ejecuta: termux-setup-storage"
+  local lista l mt ruta tam n=0 total
+  lista=$(find -L "$DESCARGAS_DIR" -maxdepth 2 -type f -iname '*.apk' -printf '%T@|%p\n' 2>/dev/null | sort -t'|' -k1,1nr)
+  total=$(printf '%s\n' "$lista" | grep -c . )
+  [ "$total" -gt 0 ] || return 1
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    mt="${l%%|*}"; mt="${mt%.*}"; ruta="${l#*|}"
+    case "$ruta" in *'|'*) continue ;; esac
+    tam=$(tam_de "$ruta"); n=$((n+1))
+    printf '\r  Analizando APK %s/%s…' "$n" "$total" >&2
+    analizar_apk "$ruta" "$tam" "$mt"
+    IT_RUTA+=("$ruta"); IT_TAM+=("$tam"); IT_MT+=("$mt"); IT_ESTADO+=("$ESTADO"); IT_RAZON+=("$RAZON"); IT_VNAME+=("$VNAME"); IT_VCODE+=("$VCODE"); IT_SHA+=("$FIRMA_SHA")
+  done <<< "$lista"
+  printf '\r\033[2K' >&2
+  [ "${#IT_RUTA[@]}" -gt 0 ]
+}
+
+dibujar_menu() {  # usa SEL TOP VIS COLS MSG y los IT_*
+  local i fin nombre det estado txt marca
+  local -a L=()
+  L+=("${B}Elige el APK de Descargas${N}")
+  L+=("↑/↓ mover · Enter elegir · r releer · q salir")
+  if [ "$SEL" -lt "$TOP" ]; then TOP=$SEL; fi
+  if [ "$SEL" -ge $((TOP+VIS)) ]; then TOP=$((SEL-VIS+1)); fi
+  fin=$((TOP+VIS)); [ "$fin" -gt "${#IT_RUTA[@]}" ] && fin=${#IT_RUTA[@]}
+  for ((i=TOP; i<fin; i++)); do
+    nombre=$(recortar "$(basename "${IT_RUTA[i]}")" $((COLS-4)))
+    det="$(mb_de "${IT_TAM[i]}") · ${IT_VNAME[i]:+${IT_VNAME[i]} (${IT_VCODE[i]}) · }$(date -d "@${IT_MT[i]}" '+%d/%m %H:%M' 2>/dev/null)"
+    case "${IT_ESTADO[i]}" in
+      ok)    if [ -n "$HUELLA_CERT_ESPERADA" ]; then txt="✔ firmada con la clave oficial"; else txt="✔ firmada (clave no comparada)"; fi; estado="${G}$(recortar "$txt" $((COLS-4)))${N}" ;;
+      aviso) estado="${Y}$(recortar "⚠ ${IT_RAZON[i]}" $((COLS-4)))${N}" ;;
+      *)     estado="${R}$(recortar "✖ ${IT_RAZON[i]}" $((COLS-4)))${N}" ;;
+    esac
+    if [ "$i" -eq "$SEL" ]; then marca="❯ "; L+=("${B}${marca}${nombre}${N}"); else marca="  "; L+=("${marca}${nombre}"); fi
+    L+=("  $(recortar "$det" $((COLS-3)))")
+    L+=("  ${estado}")
+  done
+  local m1="" m2="" resto
+  if [ -n "$MSG" ]; then
+    resto=$(printf '%s\n' "$MSG" | fold -s -w $((COLS-1)))
+    m1=$(printf '%s\n' "$resto" | sed -n 1p); m2=$(printf '%s\n' "$resto" | sed -n 2p)
+    [ -z "$m1" ] || m1="${R}${m1}${N}"; [ -z "$m2" ] || m2="${R}${m2}${N}"
+  fi
+  L+=("$m1" "$m2")
+  if [ "$ES_TTY" = 1 ] && [ "$PRIMERA" = 0 ]; then printf '\033[%dA' "$NLINEAS"; fi
+  for l in "${L[@]}"; do if [ "$ES_TTY" = 1 ]; then printf '\033[2K%s\n' "$l"; else printf '%s\n' "$l"; fi; done
+  NLINEAS=${#L[@]}; PRIMERA=0
+}
+
+# Menú con flechas para elegir un APK de Descargas. Solo deja elegir los que están firmados.
+menu_apks() {
+  abrir_entrada
+  ES_TTY=0; [ -t 1 ] && ES_TTY=1
+  local filas=24 cols=80 sz
+  if sz=$(stty size 2>/dev/null < /dev/tty) && [ -n "$sz" ]; then filas=${sz% *}; cols=${sz#* }; fi
+  COLS=$cols
+  cargar_lista_apks || die "No hay archivos .apk en Descargas ($DESCARGAS_DIR). Copia ahí el APK firmado y vuelve a intentarlo."
+  VIS=$(( (filas-6)/3 )); [ "$VIS" -lt 1 ] && VIS=1; [ "$VIS" -gt "${#IT_RUTA[@]}" ] && VIS=${#IT_RUTA[@]}
+  SEL=0; TOP=0; MSG=""; PRIMERA=1; NLINEAS=0
+  [ "$ES_TTY" = 1 ] && printf '\033[?25l'
+  while :; do
+    dibujar_menu
+    leer_tecla
+    MSG=""
+    case "$TECLA" in
+      UP)   SEL=$(( (SEL-1+${#IT_RUTA[@]}) % ${#IT_RUTA[@]} )) ;;
+      DOWN) SEL=$(( (SEL+1) % ${#IT_RUTA[@]} )) ;;
+      REFRESH) : > "$CACHE_FILE"; cargar_lista_apks || die "Ya no hay archivos .apk en Descargas."; SEL=0; TOP=0 ;;
+      QUIT) [ "$ES_TTY" = 1 ] && printf '\033[?25h'; return 1 ;;
+      ENTER)
+        if [ "${IT_ESTADO[SEL]}" = "no" ]; then
+          MSG="No se puede usar este APK: ${IT_RAZON[SEL]}"
+        else
+          [ "$ES_TTY" = 1 ] && printf '\033[?25h'
+          guardar_seleccion "${IT_RUTA[SEL]}"
+          ok "Elegiste: $(basename "${IT_RUTA[SEL]}")"
+          return 0
+        fi ;;
+    esac
+  done
+}
+
 # ---------- subcomandos ----------
 cmd_doctor() {
   cargar_config
@@ -188,19 +369,17 @@ cmd_doctor() {
 cmd_seleccionar() {
   cargar_config
   local ruta="${1:-}"
-  [ -n "$ruta" ] || die "Uso: lanzamiento-oficial seleccionar /ruta/al/archivo.apk"
-  [ -f "$ruta" ] || die "No existe el archivo: $ruta (en Descargas: ~/storage/downloads/NOMBRE.apk; si falta, ejecuta termux-setup-storage)"
-  [ -s "$ruta" ] || die "El archivo está vacío: $ruta"
-  case "${ruta,,}" in *.apk) ;; *) die "El archivo no termina en .apk: $ruta" ;; esac
-  local abs; abs=$(realpath "$ruta") || die "No pude resolver la ruta."
-  validar_zip "$abs"
-  local sha tam; sha=$(sha256_de "$abs"); tam=$(tam_de "$abs")
-  leer_metadata "$abs"; leer_firma "$abs"
-  info "${B}APK seleccionado${N}: $abs"
-  info "  Tamaño:    $tam bytes ($(mb_de "$tam"))"
-  info "  SHA-256:   $sha"
+  if [ -z "$ruta" ]; then
+    menu_apks || die "No se eligió ningún APK."
+    ok "Guardado. Ahora puedes ejecutar: lanzamiento-oficial --simulacro"
+    return 0
+  fi
+  guardar_seleccion "$ruta"
+  leer_metadata "$SEL_ABS"; leer_firma "$SEL_ABS"
+  info "${B}APK seleccionado${N}: $SEL_ABS"
+  info "  Tamaño:    $SEL_TAM_NUEVO bytes ($(mb_de "$SEL_TAM_NUEVO"))"
+  info "  SHA-256:   $SEL_SHA_NUEVO"
   mostrar_apk
-  ( umask 077; printf 'ruta=%s\nsha256=%s\ntam=%s\nseleccionado=%s\n' "$abs" "$sha" "$tam" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SEL_FILE" )
   ok "Guardado. Ahora puedes ejecutar: lanzamiento-oficial --simulacro"
 }
 
@@ -220,10 +399,12 @@ cmd_estado() {
 }
 
 cmd_publicar() {
-  local SIMULACRO=0 REDESCARGA=1 VERSION_MANUAL=""
+  local SIMULACRO=0 REDESCARGA=1 VERSION_MANUAL="" APK_ARG="" USAR_GUARDADA=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --simulacro) SIMULACRO=1 ;;
+      --apk) shift; APK_ARG="${1:-}"; [ -n "$APK_ARG" ] || die "Falta la ruta después de --apk" ;;
+      --seleccion-guardada) USAR_GUARDADA=1 ;;
       --sin-redescarga) REDESCARGA=0 ;;
       --version) shift; VERSION_MANUAL="${1:-}" ;;
       *) die "Opción desconocida: $1" ;;
@@ -233,6 +414,11 @@ cmd_publicar() {
   info "${B}Lanzamiento oficial de MusicNous${N}$([ "$SIMULACRO" = 1 ] && echo '  [SIMULACRO: no se publicará nada]')"
   comprobar_gh
   ok "gh con sesión y permiso de escritura en $REPO"
+
+  # Elección del APK: --apk RUTA, la selección guardada o el menú con flechas
+  if [ -n "$APK_ARG" ]; then guardar_seleccion "$APK_ARG"
+  elif [ "$USAR_GUARDADA" = 1 ]; then :
+  else menu_apks || die "No se eligió ningún APK. No se publicó nada."; fi
 
   # 1-2. APK seleccionado: existe, no está vacío y es el mismo que elegiste
   leer_seleccion
@@ -263,6 +449,9 @@ cmd_publicar() {
     no-comprobada) SIN_VERIFICAR="${SIN_VERIFICAR} FIRMA"; aviso "No pude verificar la firma (falta apksigner: pkg install apksigner)." ;;
   esac
   [ "$FIRMA_DEBUG" = "no" ] || die "El APK está firmado con el certificado de depuración de Android. No se publica."
+  if [ "$FIRMA" = "valida" ] && [ -n "$FIRMA_SHA" ] && [ -n "$HUELLA_CERT_ESPERADA" ] && [ "$(huella_norm "$FIRMA_SHA")" != "$(huella_norm "$HUELLA_CERT_ESPERADA")" ]; then
+    die "El APK está firmado con otra clave (huella $FIRMA_SHA), no con la clave oficial. Si cambiaste de clave a propósito, actualiza HUELLA_CERT_ESPERADA en $CONF_FILE."
+  fi
   if [ "$FIRMA" = "valida" ] && [ -z "$FIRMANTE" ]; then
     SIN_VERIFICAR="${SIN_VERIFICAR} CERTIFICADO"
     aviso "La firma es válida, pero no pude leer el certificado: no puedo descartar que sea el de depuración. Revísalo con: apksigner verify --verbose --print-certs \"$APK_PATH\""
@@ -321,12 +510,12 @@ cmd_publicar() {
   [ -z "$SIN_VERIFICAR" ] || frase="$frase CON AVISOS"
   info "\nPara continuar escribe exactamente:  $frase"
   printf '> '
-  IFS= read -r resp < "$TTY_IN" || die "No pude leer la confirmación."
+  abrir_entrada
+  IFS= read -r -u 3 resp || die "No pude leer la confirmación."
   [ "$resp" = "$frase" ] || die "Confirmación incorrecta. No se publicó nada."
 
   # 6. Borrador con el APK (nada es público todavía)
   TMPDIR_PUB=$(mktemp -d) || die "No pude crear un directorio temporal."
-  trap 'rm -rf "${TMPDIR_PUB:-}"' EXIT
   ln -s "$APK_PATH" "$TMPDIR_PUB/$ASSET" 2>/dev/null || cp "$APK_PATH" "$TMPDIR_PUB/$ASSET" || die "No pude preparar el archivo para subirlo."
   local notas="APK oficial de MusicNous $VNAME
 
@@ -422,7 +611,7 @@ case "${1:-}" in
   doctor)        shift; cmd_doctor "$@" ;;
   seleccionar)   shift; cmd_seleccionar "$@" ;;
   estado)        shift; cmd_estado "$@" ;;
-  ayuda|-h|--help) sed -n '2,13p' "$0" ;;
+  ayuda|-h|--help) sed -n '2,/^set -u/p' "$0" | sed '$d' ;;
   publicar)      shift; cmd_publicar "$@" ;;
   ''|--*)        cmd_publicar "$@" ;;
   *)             die "Comando desconocido: $1 (usa: doctor, seleccionar, estado, publicar, --simulacro)" ;;

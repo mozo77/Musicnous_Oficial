@@ -16,7 +16,7 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 
 ## Cuenta regresiva y descarga
 
-- **Cuenta regresiva:** apunta al 31/10/2026 a las 00:00 en hora de Colombia (`launchAt` en `script.js`, `2026-10-31T00:00:00-05:00`; Colombia no usa horario de verano). Al llegar a cero se detiene y muestra un mensaje de lanzamiento, sin tiempos negativos. Usa el reloj del dispositivo del visitante.
+- **Cuenta regresiva:** apunta al 31/10/2026 a las 16:00 (4:00 p. m.) en hora de Colombia (`launchAt` en `script.js`, `2026-10-31T16:00:00-05:00`; Colombia no usa horario de verano). Al llegar a cero se detiene y muestra un mensaje de lanzamiento, sin tiempos negativos. Usa el reloj del dispositivo del visitante.
 - **Probarla:** cambia temporalmente `launchAt` por una hora cercana (por ejemplo, dentro de dos minutos, con `-05:00`), recarga la web y observa el conteo y el mensaje final. Después restaura `2026-10-31T00:00:00-05:00`.
 - **Descarga:** el botón lee `release.json`. Mientras diga `"status": "coming-soon"`, muestra «Próximamente» y no ofrece ningún enlace. Solo se activa si `release.json` está completo y coherente (URL de un APK de las publicaciones de este repositorio, versión, tamaño y SHA-256) y, además, la API pública de GitHub confirma que el archivo existe en una publicación visible. Si no se puede confirmar, no se ofrece.
 - **No edites `release.json` a mano** para anunciar la descarga: debe escribirlo el comando, que lo hace al final de todas las verificaciones.
@@ -53,13 +53,15 @@ Sitio estático responsive en español, preparado para GitHub Pages. No necesita
 4. Nunca pegues el token en `script.js`, `release.json`, el repositorio ni chats. Si lo expones, revócalo en GitHub.
 5. Revisa el entorno: `lanzamiento-oficial doctor` (no modifica nada).
 
-### Seleccionar el APK final
+### Elegir el APK final (menú con flechas)
 
-```
-lanzamiento-oficial seleccionar ~/storage/downloads/TU-APK-FINAL.apk
-```
+`lanzamiento-oficial` (con o sin `--simulacro`) abre un menú con los `.apk` de la carpeta Descargas de Android (también la subcarpeta de primer nivel), del más nuevo al más viejo. Muestra tamaño, versión, fecha y si está bien firmado:
 
-Guarda la ruta y el SHA-256 en `~/.config/musicnous/apk_seleccionado` (fuera del repositorio). Si el archivo cambia después, el comando se detiene y hay que volver a seleccionarlo. La primera vez que uses Descargas, ejecuta `termux-setup-storage`.
+- **↑ / ↓** (o `k` / `j`) mueven la selección, **Enter** elige, **r** vuelve a leer la carpeta, **q** o **ESC** cancelan.
+- Solo deja elegir APK **firmados con tu clave oficial**. Rechaza (con el motivo) los que están sin firmar o con firma inválida, con la firma de depuración, firmados con otra clave, de otro paquete, depurables, de versión de pruebas o dañados.
+- La huella de la clave oficial está en `HUELLA_CERT_ESPERADA` (`~/.config/musicnous/lanzamiento.conf`). Si algún día cambias de clave a propósito, actualízala ahí.
+- El análisis de cada APK se guarda en una caché (`cache_apks`) y se repite solo si el archivo cambia.
+- Sin menú: `lanzamiento-oficial --apk RUTA` usa ese archivo y `lanzamiento-oficial --seleccion-guardada` reutiliza el último elegido. `lanzamiento-oficial seleccionar` sin ruta solo abre el menú y guarda la elección.
 
 ### Publicar
 
@@ -68,9 +70,34 @@ lanzamiento-oficial --simulacro   # todas las comprobaciones, sin publicar nada
 lanzamiento-oficial               # publicación real
 ```
 
-El comando comprueba el APK (existe, no vacío, ZIP válido), calcula el SHA-256, lee versión y paquete (aapt) y verifica la firma (apksigner). Se detiene si el paquete no es el esperado, si el APK es depurable, si está firmado con el certificado de depuración, si la versión parece de pruebas, si la etiqueta `v<versión>` ya existe o si la versión no es más nueva que la publicada. Antes de publicar pide que escribas exactamente `PUBLICAR v<versión>` (con `CON AVISOS` si hubo comprobaciones que no pudieron hacerse o si aún no es la fecha de lanzamiento). Después sube el APK a un borrador, comprueba la subida, lo publica, verifica el enlace público (HTTP 200 y tamaño), vuelve a descargarlo para comparar el SHA-256 (usa datos móviles; se omite con `--sin-redescarga`) y solo entonces actualiza `release.json` y espera a que GitHub Pages lo muestre. Nunca borra ni sobrescribe publicaciones existentes.
+Tras elegir el APK en el menú, el comando lo comprueba (existe, no vacío, ZIP válido), calcula el SHA-256, lee versión y paquete (aapt) y verifica la firma (apksigner). Se detiene si el paquete no es el esperado, si el APK es depurable, si está firmado con el certificado de depuración, si la versión parece de pruebas, si la etiqueta `v<versión>` ya existe o si la versión no es más nueva que la publicada. Antes de publicar pide que escribas exactamente `PUBLICAR v<versión>` (con `CON AVISOS` si hubo comprobaciones que no pudieron hacerse o si aún no es la fecha de lanzamiento). Después sube el APK a un borrador, comprueba la subida, lo publica, verifica el enlace público (HTTP 200 y tamaño), vuelve a descargarlo para comparar el SHA-256 (usa datos móviles; se omite con `--sin-redescarga`) y solo entonces actualiza `release.json` y espera a que GitHub Pages lo muestre. Nunca borra ni sobrescribe publicaciones existentes.
 
 Convención: etiqueta `v<versionName>` y archivo `MusicNous-<versionName>.apk`. Antes de cada lanzamiento, sube `versionName` y `versionCode` en la app. Si el APK usa otro identificador de paquete, cámbialo en `~/.config/musicnous/lanzamiento.conf`.
+
+### Ensayo general (repositorio de pruebas)
+
+`lanzamiento-ensayo` ejecuta **el mismo comando** que `lanzamiento-oficial`, pero contra un repositorio de pruebas aparte, con otra carpeta de ajustes (`~/.config/musicnous-prueba`). No puede tocar el repositorio oficial: se niega a usarlo y, además, el token de pruebas solo funciona en el repositorio de pruebas.
+
+1. En GitHub crea un repositorio **público** (por ejemplo `mozo77/Musicnous_Pruebas`) con un README, y activa Pages: Settings → Pages → Deploy from a branch → `main` → `/(root)`. Debe ser público porque el comando comprueba el enlace de descarga sin iniciar sesión.
+2. Crea un token fine-grained **solo para ese repositorio** (Contents: Read and write).
+3. En Termux: `lanzamiento-ensayo preparar mozo77/Musicnous_Pruebas`.
+4. Pega el token de pruebas (`read -rs -p "Token de pruebas: " GH_TOKEN; export GH_TOKEN`) y ejecuta `lanzamiento-ensayo doctor` y luego `lanzamiento-ensayo`.
+5. El ensayo usa una fecha de lanzamiento ya pasada, así que pide la misma frase que el día real (sin `CON AVISOS`).
+6. Al terminar, borra el repositorio de pruebas (Settings → Delete this repository) y revoca su token, para que el APK no quede público.
+
+El ensayo prueba la subida, la verificación y la actualización de `release.json`. El botón de la web y el actualizador de la app solo leen el repositorio oficial, así que esos dos se comprueban de verdad al publicar.
+
+### Ensayo del actualizador de la app
+
+El actualizador de la app oficial solo lee el repositorio oficial. Para ensayarlo existe una app de pruebas (`io.github.jmoxs77.musicnous.pruebas`, «MusicNous Pruebas»): se instala junto a la oficial y apunta solo al repositorio de pruebas. La genera el workflow manual `build-pruebas.yml` del repositorio privado de la app, que parchea una copia en GitHub y no cambia el código.
+
+1. Ejecuta el workflow dos veces (Actions → Build APK de PRUEBAS → Run workflow): primero `1.60.0` / `66` (la que instalas) y luego `1.60.1` / `67` (la que publicas).
+2. Instala `MusicNous-pruebas-1.60.0-66.apk` en el teléfono y abre la app: «Buscar actualizaciones» debe decir que estás al día.
+3. Prepara el ensayo con ese paquete: `lanzamiento-ensayo preparar mozo77/Musicnous_Pruebas io.github.jmoxs77.musicnous.pruebas`.
+4. Publica `MusicNous-pruebas-1.60.1-67.apk` con `lanzamiento-ensayo` y, cuando Pages lo sirva, vuelve a «Buscar actualizaciones» en la app de pruebas: debe ofrecer la 1.60.1 y, al aceptar, descargarla, verificarla e instalarla.
+5. Al terminar, desinstala «MusicNous Pruebas», borra el repositorio de pruebas y revoca su token.
+
+El lanzamiento oficial rechaza estos APK por su paquete, y el ensayo rechaza los oficiales.
 
 ### Verificar que el botón descarga el APK correcto
 

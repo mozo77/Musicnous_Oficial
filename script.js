@@ -13,8 +13,8 @@
 
   const CONFIG = {
     repo: "mozo77/Musicnous_Oficial",
-    // 31/10/2026 00:00 en Colombia (UTC-5, sin horario de verano) = 05:00 UTC.
-    launchAt: "2026-10-31T00:00:00-05:00",
+    // 31/10/2026 16:00 (4:00 p. m.) en Colombia (UTC-5, sin horario de verano) = 21:00 UTC.
+    launchAt: "2026-10-31T16:00:00-05:00",
     releaseFile: "release.json",
     apiTimeoutMs: 6000,
     preflightTimeoutMs: 8000,
