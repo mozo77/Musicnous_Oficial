@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "status": "available",
-  "version": "1.83.0",
-  "version_code": 90,
+  "version": "1.91.0",
+  "version_code": 98,
   "package": "io.github.jmoxs77.musicnous",
-  "tag": "v1.83.0",
-  "apk_name": "MusicNous-1.83.0.apk",
-  "apk_url": "https://github.com/mozo77/Musicnous_Oficial/releases/download/v1.83.0/MusicNous-1.83.0.apk",
-  "release_url": "https://github.com/mozo77/Musicnous_Oficial/releases/tag/v1.83.0",
-  "size_bytes": 101893602,
-  "sha256": "0d3a92d2db8ecd9da76c9ebd9ea4bad6da5022054114e9d3399cb9060bbd1dad",
-  "published_at": "2026-10-31T21:02:06Z"
+  "tag": "v1.91.0",
+  "apk_name": "MusicNous-1.91.0.apk",
+  "apk_url": "https://github.com/mozo77/Musicnous_Oficial/releases/download/v1.91.0/MusicNous-1.91.0.apk",
+  "release_url": "https://github.com/mozo77/Musicnous_Oficial/releases/tag/v1.91.0",
+  "size_bytes": 101898298,
+  "sha256": "6d014d27da336ca983494d205ca8215ee4d23d3526a89e762738420888517820",
+  "published_at": "2026-11-01T12:13:22Z"
 }
