@@ -1,0 +1,10 @@
+{
+  "avisos": [
+    {
+      "id": 1,
+      "fecha": "2026-11-01",
+      "es": "Corregí el error 502 al buscar letras.",
+      "en": "Fixed the 502 error when fetching lyrics."
+    }
+  ]
+}
